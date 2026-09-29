@@ -1,0 +1,166 @@
+"use strict";
+// Plain JS dashboard. All dynamic text is set with textContent (never innerHTML).
+const $ = (id) => document.getElementById(id);
+let token = sessionStorage.getItem("derivbot_token") || "";
+let csrf = "";
+let pendingNonce = "";
+
+$("token").value = token;
+$("save-token").onclick = () => { token = $("token").value; sessionStorage.setItem("derivbot_token", token); say("token set"); };
+
+function say(t) { $("msg").textContent = t; }
+
+async function getJSON(url) {
+  const r = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!r.ok) throw new Error(url + " -> " + r.status);
+  return r.json();
+}
+
+async function post(url, body) {
+  if (!csrf) csrf = (await getJSON("/api/csrf")).csrf;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + token, "X-CSRF-Token": csrf },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (r.status === 403 || r.status === 401) csrf = ""; // refresh CSRF token next time
+  if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+  return data;
+}
+
+function dl(el, rows) {
+  el.replaceChildren();
+  for (const [k, v] of rows) {
+    const dt = document.createElement("dt"); dt.textContent = k;
+    const dd = document.createElement("dd"); dd.textContent = v === null || v === undefined ? "—" : String(v);
+    el.append(dt, dd);
+  }
+}
+
+function table(el, cols, rows) {
+  el.replaceChildren();
+  const head = document.createElement("tr");
+  for (const c of cols) { const th = document.createElement("th"); th.textContent = c; head.append(th); }
+  el.append(head);
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    for (const c of cols) { const td = document.createElement("td"); td.textContent = r[c] ?? ""; tr.append(td); }
+    el.append(tr);
+  }
+}
+
+const pct = (x) => (x === null || x === undefined ? "—" : (100 * x).toFixed(2) + "%");
+const fmtTs = (t) => (t ? new Date(t * 1000).toISOString().slice(11, 19) + "Z" : "—");
+
+function render(s) {
+  const bar = $("modebar");
+  bar.className = s.mode === "live" ? "live" : "demo";
+  $("mode").textContent = "MODE: " + s.mode.toUpperCase();
+  $("runstate").textContent = (s.running ? "RUNNING" : "STOPPED") + (s.trading_enabled ? "" : " · NO TRADING");
+
+  const alerts = $("alerts"); alerts.replaceChildren();
+  const add = (t, cls) => { const b = document.createElement("span"); b.className = "badge " + cls; b.textContent = t; alerts.append(b, " "); };
+  add("RISK: " + s.risk_status, s.risk_status === "OK" ? "ok" : "bad");
+  for (const h of s.halts) add(h, "bad");
+  if (s.feed.stale) add("STALE FEED", "bad");
+  if (!s.trading_enabled) add(s.model.status === "NO_MODEL" ? "NO MODEL / NO TRADING" : "MODEL " + s.model.status, "warnb");
+
+  dl($("account"), [
+    ["Account", s.account.id], ["Type (API-verified)", s.account.type],
+    ["Balance", s.account.balance ? s.account.balance + " " + s.account.currency : null],
+    ["Balance updated", fmtTs(s.account.balance_ts)], ["Open trades", s.open_trades],
+    ["Open exposure", s.open_exposure],
+  ]);
+  dl($("pnl"), [
+    ["Daily P&L", s.daily_pnl], ["Weekly P&L", s.weekly_pnl], ["Drawdown", pct(Number(s.drawdown))],
+    ["High-water mark", s.hwm], ["Consecutive losses", s.consecutive_losses],
+    ["Win rate (settled)", pct(s.win_rate) + " (" + s.settled_trades + ")"],
+    ["Break-even win rate", pct(s.break_even_win_rate)],
+  ]);
+  const probs = Object.entries(s.probabilities).map(([k, v]) => k + " ↑" + pct(v.CALL) + " ↓" + pct(v.PUT)).join(" | ");
+  dl($("model"), [
+    ["Model status", s.model.status], ["Model version", s.model.version], ["Model error", s.model.error],
+    ["Latest probability", probs || null], ["Edge margin", s.edge_margin],
+  ]);
+  const lat = Object.entries(s.latency).map(([k, v]) => k + ": med " + v.median.toFixed(0) + " / p95 " + v.p95.toFixed(0) + " / max " + v.max.toFixed(0) + " ms");
+  dl($("feed"), [
+    ["Feed", s.feed.stale ? "STALE" : "healthy"],
+    ["Reconnects / disconnects", s.feed.reconnects + " / " + s.feed.disconnects],
+    ["Ticks / dropped", s.counters.ticks + " / " + s.counters.ticks_dropped],
+    ["Signals / dropped", s.counters.signals_generated + " / " + s.counters.signals_dropped],
+    ...lat.map((l) => ["Latency", l]),
+  ]);
+}
+
+function drawChart(ticks) {
+  const sel = $("symbol");
+  const symbols = Object.keys(ticks);
+  if (sel.options.length !== symbols.length) {
+    sel.replaceChildren(...symbols.map((s) => new Option(s, s)));
+  }
+  const data = (ticks[sel.value || symbols[0]] || []).map((t) => t[1]);
+  const c = $("chart"), g = c.getContext("2d");
+  g.clearRect(0, 0, c.width, c.height);
+  if (data.length < 2) return;
+  const lo = Math.min(...data), hi = Math.max(...data), span = hi - lo || 1;
+  g.strokeStyle = "#2f81f7"; g.beginPath();
+  data.forEach((v, i) => {
+    const x = (i / (data.length - 1)) * c.width, y = c.height - ((v - lo) / span) * (c.height - 10) - 5;
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  });
+  g.stroke();
+}
+
+async function refresh() {
+  try {
+    const [s, l] = await Promise.all([getJSON("/api/status"), getJSON("/api/lists")]);
+    render(s);
+    drawChart(l.ticks);
+    table($("trades"), ["opened_at", "symbol", "direction", "stake", "state", "profit", "probability", "break_even"], l.trades);
+    table($("signals"), ["created_at", "symbol", "direction", "probability", "status", "reject_reason"], l.signals);
+    table($("events"), ["ts", "severity", "rule", "message"], l.risk_events);
+  } catch (e) { say(String(e)); }
+}
+
+async function act(fn) { try { await fn(); say("ok"); } catch (e) { say(String(e.message || e)); } refresh(); }
+
+$("btn-start").onclick = () => act(() => post("/start", { confirm: true }));
+$("btn-stop").onclick = () => act(() => post("/stop", { confirm: true }));
+$("btn-kill").onclick = () => { if (confirm("Activate the kill switch?")) act(() => post("/kill", { confirm: true, reason: "dashboard" })); };
+$("btn-clear-kill").onclick = () => {
+  const phrase = prompt("Bot must be stopped. Type CLEAR KILL to clear the kill switch:");
+  if (phrase === "CLEAR KILL") act(() => post("/kill/clear", { confirm: true, phrase }));
+};
+$("btn-reload").onclick = () => act(() => post("/model/reload", { confirm: true }));
+$("btn-demo").onclick = () => act(() => post("/mode", { target: "demo" }));
+
+$("btn-live").onclick = async () => {
+  $("live-msg").textContent = "";
+  try {
+    const p = await post("/mode/prepare", { confirm: true });
+    pendingNonce = p.nonce;
+    dl($("live-summary"), [
+      ["Account", p.account_id], ["Account type", p.account_type], ["Balance", p.balance],
+      ["Proposed stake", p.proposed_stake], ["Daily loss limit", p.risk_limits.daily_loss_percent],
+      ["Weekly loss limit", p.risk_limits.weekly_loss_percent], ["Max drawdown", p.risk_limits.max_drawdown_percent],
+      ["Max exposure", p.risk_limits.max_total_exposure_percent], ["Max trades/day", p.risk_limits.max_trades_per_day],
+      ["Max open trades", p.risk_limits.max_open_trades], ["Current drawdown", p.drawdown],
+      ["Daily P&L", p.daily_pnl], ["Weekly P&L", p.weekly_pnl], ["Open exposure", p.open_exposure],
+      ["Model status", p.model_status], ["Edge gate", (p.edge_gate.passes ? "passes" : "FAILS") + " (margin " + p.edge_gate.edge_margin + ")"],
+    ]);
+    $("live-typed").value = ""; $("live-second").checked = false;
+    $("modal").classList.remove("hidden");
+  } catch (e) { say(String(e.message || e)); }
+};
+$("live-cancel").onclick = () => { pendingNonce = ""; $("modal").classList.add("hidden"); };
+$("live-confirm").onclick = async () => {
+  try {
+    await post("/mode", { target: "live", typed: $("live-typed").value, second_confirm: $("live-second").checked, nonce: pendingNonce });
+    $("modal").classList.add("hidden"); say("LIVE mode set (memory only)");
+  } catch (e) { $("live-msg").textContent = String(e.message || e); }
+  refresh();
+};
+
+refresh();
+setInterval(refresh, 1500);

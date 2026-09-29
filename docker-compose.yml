@@ -1,0 +1,22 @@
+services:
+  derivbot:
+    build: .
+    container_name: derivbot
+    restart: always
+    env_file:
+      - path: .env        # create it from .env.example (never commit it)
+        required: false
+    environment:
+      DERIVBOT_HOST: "0.0.0.0"     # inside the container only
+      AUTOSTART: "false"
+    ports:
+      # Host side is bound to loopback: the dashboard is NOT exposed publicly by default.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/srv/derivbot/data            # SQLite database
+      - ./logs:/srv/derivbot/logs            # rotating structured logs
+      - ./model:/srv/derivbot/model          # model artifacts
+      # To override settings: cp config.example.yaml config.yaml, then uncomment the next line and
+      # set DERIVBOT_CONFIG=/srv/derivbot/config.yaml above (the file must exist on the host).
+      # - ./config.yaml:/srv/derivbot/config.yaml:ro
+    stop_grace_period: 30s                    # allows the ordered graceful shutdown

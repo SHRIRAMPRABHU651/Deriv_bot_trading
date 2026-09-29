@@ -1,0 +1,29 @@
+# Research commands
+
+All commands run from the repository root inside the virtualenv. Nothing here places trades.
+
+```bash
+# 1. Historical ticks (public call, no token). Adjust --ws-url if Deriv changes the public endpoint.
+python -m research.download_ticks --symbol R_100 --count 200000 --out data/R_100.csv
+
+# 2. (optional) inspect the supervised dataset
+python -m research.build_dataset --ticks data/R_100.csv --horizon 10 --out data/R_100_h10.npz
+
+# 3. Walk-forward report with shuffled-label control (no artifact written)
+python -m research.walk_forward --ticks data/R_100.csv --horizon 10
+
+# 4. Train + validate + write model/model.joblib and model/metadata.json
+python -m research.train_model --symbol R_100 --ticks data/R_100.csv --horizon 10
+
+# 5. Out-of-sample check on NEWER ticks
+python -m research.evaluate --model-dir model --ticks data/R_100_new.csv
+
+# 6. Manual lifecycle (see docs/ML.md)
+python -m research.evaluate --model-dir model --start-demo-validation
+python -m research.evaluate --model-dir model --demo-db data/derivbot.db            # dry run
+python -m research.evaluate --model-dir model --demo-db data/derivbot.db --promote
+```
+
+A model whose verdict is **NO EVIDENCE OF EDGE** is stored with status `REJECTED` and the bot
+refuses to trade it. That is the expected outcome for most price series (synthetic indices are
+designed to be random walks). Do not lower thresholds to change that.

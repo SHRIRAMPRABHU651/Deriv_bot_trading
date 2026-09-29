@@ -1,0 +1,24 @@
+[Unit]
+Description=DERIVBOT trading bot (DEMO-first)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=derivbot
+WorkingDirectory=/opt/derivbot
+EnvironmentFile=/opt/derivbot/.env
+Environment=AUTOSTART=false
+ExecStart=/opt/derivbot/.venv/bin/python -m app.main
+Restart=always
+RestartSec=5
+# Give the ordered graceful shutdown time to reconcile and close cleanly.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/derivbot
+
+[Install]
+WantedBy=multi-user.target
