@@ -13,8 +13,11 @@ class Mode(StrEnum):
 
 
 class Direction(StrEnum):
+    """Bullish (CALL) / bearish (PUT) view. NEUTRAL = non-directional (Accumulators)."""
+
     CALL = "CALL"
     PUT = "PUT"
+    NEUTRAL = "NEUTRAL"
 
 
 class ModelStatus(StrEnum):
@@ -79,6 +82,8 @@ class Signal:
     tick_received_at: float
     created_at: float
     features_version: str | None = None
+    product: str = "rise_fall"
+    entry_price: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +95,11 @@ class Proposal:
     longcode: str = ""
     min_stake: Decimal | None = None
     max_stake: Decimal | None = None
+    commission: float | None = None
+    contracts: float | None = None  # implied number of contracts (turbos / vanillas)
+    barrier_abs: float | None = None  # absolute barrier / strike (turbos / vanillas)
+    barrier_pct_per_tick: float | None = None  # accumulator tick barrier as a FRACTION of spot
+    max_ticks: int | None = None  # accumulator maximum duration
 
     @property
     def payout_ratio(self) -> Decimal:
@@ -125,6 +135,8 @@ class ContractUpdate:
     symbol: str | None = None
     contract_type: str | None = None
     purchase_time: int | None = None
+    bid_price: Decimal | None = None
+    valid_to_sell: bool = False
 
 
 @dataclass(frozen=True, slots=True)

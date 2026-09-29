@@ -90,7 +90,7 @@ class Executor:
 
         try:
             proposal = await asyncio.wait_for(
-                self._client.proposal(signal.symbol, signal.direction.value, decision.stake),
+                self._client.proposal(signal.symbol, signal.direction, decision.stake),
                 self._cfg.deriv.proposal_timeout_s + 1.0,
             )
             self.stats["proposals"] += 1
@@ -165,6 +165,7 @@ class Executor:
                 probability=signal.probability,
                 break_even=break_even,
                 ts=self._clock.now(),
+                product=signal.product,
             )
             self._repos.set_signal_status(signal.signal_id, "EXECUTED")
         self._risk.on_purchase()

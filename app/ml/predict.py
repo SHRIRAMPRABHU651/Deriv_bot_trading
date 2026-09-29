@@ -10,23 +10,22 @@ from app.ml.artifacts import ModelMetadata, load_artifact
 from app.ml.features import FEATURE_VERSION
 from app.ml.train import TrainedModel
 from app.models.schemas import Direction, ModelStatus
+from app.products import Product, ProductSpec
 
 
 class ModelPredictor:
     def __init__(self, model: TrainedModel, meta: ModelMetadata) -> None:
         self.model = model
         self.meta = meta
+        if meta.spec:
+            self.spec = ProductSpec.model_validate(meta.spec)
+        else:  # legacy artifacts: Rise/Fall over `label_horizon` ticks
+            self.spec = ProductSpec(product=Product.RISE_FALL, horizon_ticks=meta.label_horizon)
 
     @classmethod
     def load(cls, model_dir: str | Path, feature_version: str = FEATURE_VERSION) -> ModelPredictor:
         payload, meta = load_artifact(model_dir, feature_version)
-        model = TrainedModel(
-            kind=str(payload.get("kind", meta.model_kind)),
-            pipeline=payload["pipeline"],
-            calibrator=payload["calibrator"],
-            tie_rate=float(payload.get("tie_rate", meta.tie_rate)),
-        )
-        return cls(model, meta)
+        return cls(TrainedModel.from_payload(payload, meta.model_kind), meta)
 
     @property
     def version(self) -> str:
@@ -41,7 +40,11 @@ class ModelPredictor:
         return self.meta.label_horizon
 
     def probabilities(self, features: np.ndarray) -> dict[Direction, float]:
-        """Calibrated win probabilities. P(CALL)=P(up); P(PUT)=1-P(up)-P(tie) (ties lose)."""
-        p_up = float(self.model.predict_up(features.reshape(1, -1))[0])
-        p_put = min(1.0, max(0.0, 1.0 - p_up - self.model.tie_rate))
-        return {Direction.CALL: p_up, Direction.PUT: p_put}
+        """Calibrated probabilities that the trade reaches its profit target.
+
+        Rise/Fall: P(CALL)=P(up), P(PUT)=1-P(up)-P(tie). Multiplier/Turbo/Vanilla: separate heads.
+        Accumulator: one non-directional survival probability keyed NEUTRAL."""
+        p_bull, p_bear = self.model.direction_probs(features.reshape(1, -1))
+        if self.spec.product is Product.ACCUMULATOR:
+            return {Direction.NEUTRAL: float(p_bull[0])}
+        return {Direction.CALL: float(p_bull[0]), Direction.PUT: float(p_bear[0])}

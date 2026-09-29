@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.models.schemas import Mode
+from app.products import ProductSpec
 
 
 class Settings(BaseSettings):
@@ -139,7 +140,7 @@ class DerivSection(BaseModel):
 class TradingSection(BaseModel):
     symbols: list[str] = Field(default_factory=lambda: ["R_100"])
     currency: str = "USD"
-    duration_ticks: int = 10
+    product: ProductSpec = Field(default_factory=ProductSpec)
     min_stake: Decimal = Decimal("0.35")
     stake_precision: int = 2
     max_signal_age_s: float = 2.0
@@ -147,6 +148,10 @@ class TradingSection(BaseModel):
     execution_workers: int = 2
     tick_queue_size: int = 256
     signal_queue_size: int = 32
+
+    @property
+    def duration_ticks(self) -> int:
+        return self.product.horizon_ticks
 
 
 class StrategySection(BaseModel):

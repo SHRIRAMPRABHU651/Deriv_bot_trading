@@ -2,10 +2,29 @@
 
 _Everything below reports what was actually executed. Where something could not be done it says so._
 
+## Update — trade types of the Deriv app (Multipliers, Accumulators, Turbos, Vanillas)
+The bot originally modelled only Rise/Fall. It now supports the four **Options** products shown in the Deriv app
+(plus Rise/Fall), selected by `trading.product.product` (default `multiplier`):
+- `app/products.py`: per-product proposal requests (`MULTUP/MULTDOWN` with native `limit_order`, `ACCU` with growth rate and
+  native take-profit, `TURBOSLONG/SHORT` with a knock-out barrier, `VANILLALONGCALL/PUT`), **payoff terms from the actual
+  proposal** (fees, limit orders, contracts, barrier), a **fail-closed check that the live contract still matches the
+  terms the model was trained on**, and vectorised first-passage **labels** for research.
+- One generalised edge gate: `p ≥ L/(W+L) + margin` (Rise/Fall = `1/R`); every product's maximum loss is bounded by its stake.
+- Exits: native TP/SL for multipliers/accumulators; **bot-managed take-profit for turbos**; hold-cap **sell at market** for
+  products that never expire; vanillas held to expiry. Restarts resume the exit plan from the database.
+- ML: per-product datasets/labels, separate bullish/bearish heads where wins are not complementary, product stored in the
+  artifact; a model for other terms is refused. Promotion/monitoring count *target hits*, not merely profit > 0.
+- Tested against the mock broker for all four products (requests, buy, TP/SL/knock-out, hold cap, turbo exit, vanilla expiry,
+  spec mismatch, restart) and by unit tests (vectorised labels == brute-force simulation for every product).
+- **Not confirmed against the real API** (see `docs/API_NOTES.md` §"Trade types"): new-API field names for these products,
+  the units of `commission` and `tick_size_barrier_percentage`, per-symbol availability and duration limits.
+  Synthetic pipeline results per product: momentum series → `EDGE EVIDENCE`; random walk / constant volatility →
+  `NO EVIDENCE OF EDGE` (multiplier, turbo, vanilla, accumulator).
+
 ## Summary
 | | |
 |---|---|
-| Local quality gate | `make check` → **exit 0** (ruff 0 errors · mypy strict 0 errors · security scan clean · **176 tests pass**) |
+| Local quality gate | `make check` → **exit 0** (ruff 0 errors · mypy strict 0 errors · security scan clean · **228 tests pass**) |
 | Real Deriv DEMO validation | **NOT performed** (no DEMO credentials in the build environment; Deriv hosts were blocked by the egress proxy) |
 | Real-money (LIVE) activity | **None.** LIVE was never enabled, no live token exists, no live order was sent |
 | Profitability | **Not claimed and not guaranteed** |
@@ -42,9 +61,9 @@ corrected to the documented types.
 |---|---|
 | `python -m compileall app tests research scripts` | OK |
 | `ruff check .` | **All checks passed** (rules E,F,W,I,B,UP,SIM,C4,ASYNC; none disabled) |
-| `mypy app tests research scripts` | **Success: no issues found in 83 source files** (`strict = true`; **no `type: ignore`**; only sklearn/joblib/scipy have `ignore_missing_imports` because they ship no complete typing) |
+| `mypy app tests research scripts` | **Success: no issues found in 89 source files** (`strict = true`; **no `type: ignore`**; only sklearn/joblib/scipy have `ignore_missing_imports` because they ship no complete typing) |
 | `python scripts/check.py` | security check passed (no secrets, no live credentials, no AI/LLM imports) |
-| `pytest -q` | **176 passed** (integration suite re-run 3× consecutively, stable) |
+| `pytest -q` | **228 passed** (integration suite re-run 3× consecutively, stable) |
 | `make check` | **exit 0** |
 
 Test areas: strategy/EMA/features/leakage; ML (labels, walk-forward gap, calibration, shuffled control, artifacts);

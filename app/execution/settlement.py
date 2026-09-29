@@ -15,7 +15,8 @@ from app.deriv.client import DerivClient
 from app.deriv.protocol import ConnectionLost, DerivError
 from app.deriv.websocket import Subscription
 from app.metrics.latency import LatencyTracker
-from app.models.schemas import ContractUpdate, Mode, OrderState
+from app.models.schemas import ContractUpdate, Mode, OrderState, Severity
+from app.products import ExitPlan, exit_plan
 from app.risk.manager import ModelInfo, RiskManager
 from app.storage.repositories import Repositories
 
@@ -51,8 +52,12 @@ class SettlementTracker:
         self._model = model_getter
         self._subs: dict[int, Subscription] = {}
         self._timers: dict[int, asyncio.Task[None]] = {}
+        self._holds: dict[int, asyncio.Task[None]] = {}
+        self._plans: dict[int, ExitPlan | None] = {}
+        self._selling: set[int] = set()
         self._tasks: set[asyncio.Task[None]] = set()
         self.settled_count = 0
+        self.exits = {"take_profit": 0, "hold_cap": 0}
 
     @property
     def mode(self) -> Mode:
@@ -74,22 +79,74 @@ class SettlementTracker:
                 self._repos.add_reconciliation(
                     self.mode, "watch_failed", "could not subscribe to contract", contract_id
                 )
-        self._arm_timer(order_id, contract_id)
+        plan = self._plan_for(order_id)
+        self._plans[contract_id] = plan
+        hold = plan.max_hold_s if plan is not None and plan.max_hold_s else 0.0
+        if hold and contract_id not in self._holds:
+            self._holds[contract_id] = asyncio.create_task(
+                self._hold_guard(order_id, contract_id, hold)
+            )
+        self._arm_timer(order_id, contract_id, self._cfg.deriv.settlement_timeout_s + hold)
 
-    def _arm_timer(self, order_id: str, contract_id: int) -> None:
+    def _plan_for(self, order_id: str) -> ExitPlan | None:
+        """Bot-managed exits derive from the order row + configured product (DB is authoritative,
+        so a restart resumes the same plan)."""
+        row = self._repos.get_order(order_id)
+        spec = self._cfg.trading.product
+        if row is None or row["product"] != spec.product.value:
+            return None
+        return exit_plan(spec, Decimal(str(row["ask_price"] or row["stake"])))
+
+    def _arm_timer(self, order_id: str, contract_id: int, delay: float) -> None:
         """(Re)start the settlement deadline: an OPEN contract can never be forgotten."""
         old = self._timers.get(contract_id)
         if old is not None and old is not asyncio.current_task():
             old.cancel()
-        self._timers[contract_id] = asyncio.create_task(self._timeout_guard(order_id, contract_id))
+        self._timers[contract_id] = asyncio.create_task(
+            self._timeout_guard(order_id, contract_id, delay)
+        )
+
+    async def _hold_guard(self, order_id: str, contract_id: int, hold_s: float) -> None:
+        """Products that never expire (multipliers, accumulators) are closed after the hold cap."""
+        await asyncio.sleep(hold_s)
+        row = self._repos.get_order(order_id)
+        if row is not None and row["state"] in SETTLABLE:
+            await self._sell(order_id, contract_id, "hold_cap")
+
+    async def _sell(self, order_id: str, contract_id: int, reason: str) -> None:
+        if contract_id in self._selling:
+            return
+        self._selling.add(contract_id)
+        try:
+            await self._client.sell(contract_id)
+        except (DerivError, ConnectionLost, TimeoutError) as exc:
+            self._selling.discard(contract_id)  # allow another attempt
+            self._repos.add_risk_event(
+                self.mode,
+                Severity.WARNING,
+                "sell_failed",
+                f"{reason}: {type(exc).__name__}",
+                ts=self._clock.now(),
+            )
+            return
+        self.exits[reason] = self.exits.get(reason, 0) + 1
+        self._repos.add_reconciliation(self.mode, f"exit_{reason}", order_id, contract_id)
+
+    async def _maybe_take_profit(self, order_id: str, update: ContractUpdate) -> None:
+        plan = self._plans.get(update.contract_id)
+        if plan is None or plan.take_profit_pct is None or update.profit is None:
+            return
+        target = Decimal(str(plan.take_profit_pct)) * plan.cost
+        if update.valid_to_sell and update.profit >= target:
+            await self._sell(order_id, update.contract_id, "take_profit")
 
     def _spawn(self, coro: Awaitable[None]) -> None:
         task = asyncio.ensure_future(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _timeout_guard(self, order_id: str, contract_id: int) -> None:
-        await asyncio.sleep(self._cfg.deriv.settlement_timeout_s)
+    async def _timeout_guard(self, order_id: str, contract_id: int, delay: float) -> None:
+        await asyncio.sleep(delay)
         row = self._repos.get_order(order_id)
         if row is not None and row["state"] in SETTLABLE:
             self._repos.update_order(order_id, state=OrderState.RECONCILIATION_PENDING)
@@ -117,6 +174,8 @@ class SettlementTracker:
     async def handle_update(self, order_id: str, update: ContractUpdate) -> None:
         if update.is_sold or update.status in ("won", "lost", "sold", "cancelled"):
             await self.settle(order_id, update)
+        else:
+            await self._maybe_take_profit(order_id, update)
 
     async def resolve(self, order_id: str, contract_id: int) -> None:
         """Query the account for a contract's final state and settle / resume watching."""
@@ -149,13 +208,24 @@ class SettlementTracker:
         else:
             profit = Decimal(0) - stake if update.status == "lost" else Decimal(0)
         won = profit > 0
+        win_amount = row["win_amount"]
+        # 'target hit' is the event the model predicts; it drives the rolling monitor and promotion.
+        target_hit = (
+            profit >= Decimal(str(win_amount)) * Decimal("0.9") if win_amount else profit > 0
+        )
         state = OrderState.WON if won else OrderState.LOST
         contract_id = int(row["contract_id"])
         now = self._clock.now()
         with self._repos.db.transaction():
             self._repos.update_order(order_id, state=state)
             self._repos.settle_trade(
-                contract_id, state, profit, update.entry_spot, update.exit_spot, now
+                contract_id,
+                state,
+                profit,
+                update.entry_spot,
+                update.exit_spot,
+                now,
+                target_hit=target_hit,
             )
             if reconciled:
                 self._repos.add_reconciliation(
@@ -173,6 +243,11 @@ class SettlementTracker:
         timer = self._timers.pop(contract_id, None)
         if timer is not None and timer is not asyncio.current_task():
             timer.cancel()
+        hold = self._holds.pop(contract_id, None)
+        if hold is not None and hold is not asyncio.current_task():
+            hold.cancel()
+        self._plans.pop(contract_id, None)
+        self._selling.discard(contract_id)
         sub = self._subs.pop(contract_id, None)
         if sub is not None:
             with contextlib.suppress(Exception):
@@ -189,6 +264,9 @@ class SettlementTracker:
         for t in list(self._timers.values()):
             t.cancel()
         self._timers.clear()
+        for h in list(self._holds.values()):
+            h.cancel()
+        self._holds.clear()
         for task in list(self._tasks):
             task.cancel()
         for sub in list(self._subs.values()):

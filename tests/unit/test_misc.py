@@ -31,7 +31,8 @@ from app.ml.statistics import (
     rolling_edge_check,
     wilson_interval,
 )
-from app.models.schemas import Mode
+from app.models.schemas import Direction, Mode
+from app.products import Product, ProductSpec, proposal_params
 from app.storage.database import Database
 from app.storage.repositories import Repositories
 from tests.conftest import make_settings
@@ -84,10 +85,16 @@ def test_rolling_check_halts_only_when_significantly_below_break_even() -> None:
 def test_builders_use_documented_shapes() -> None:
     assert protocol.ping() == {"ping": 1}
     assert protocol.ticks("R_100") == {"ticks": "R_100", "subscribe": 1}
+    spec = ProductSpec(product=Product.RISE_FALL, horizon_ticks=5)
     p = protocol.proposal(
-        symbol="R_100", contract_type="CALL", amount=Decimal("1.5"), currency="USD", duration=5
+        symbol="R_100",
+        amount=Decimal("1.5"),
+        currency="USD",
+        product_params=proposal_params(spec, Direction.CALL, Decimal("1.5")),
     )
     assert p["basis"] == "stake" and p["duration_unit"] == "t" and p["amount"] == 1.5
+    assert p["contract_type"] == "CALL" and p["duration"] == 5 and p["symbol"] == "R_100"
+    assert protocol.sell(9) == {"sell": 9, "price": 0}
     assert protocol.buy("abc", Decimal("1.5"))["price"] == 1.5
     assert protocol.proposal_open_contract(7, True) == {
         "proposal_open_contract": 1,
@@ -265,3 +272,15 @@ async def test_telegram_is_noop_when_unconfigured_and_dedupes(
     b.notify("rule", "second")  # de-duplicated
     await asyncio.sleep(0.05)
     assert len(calls) == 1 and "first" in calls[0]
+
+
+def test_shipped_example_configs_are_valid_and_identical() -> None:
+    from pathlib import Path
+
+    from app.config import load_config
+
+    root = Path(__file__).resolve().parents[2]
+    cfg = load_config(root / "config.example.yaml")
+    assert cfg.trading.product.product.value == "multiplier"
+    assert cfg.trading.product.stop_loss_pct <= 1
+    assert (root / "config.example.yaml").read_text() == (root / "config.yaml.example").read_text()

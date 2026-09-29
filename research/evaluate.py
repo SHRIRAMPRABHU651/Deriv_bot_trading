@@ -16,31 +16,31 @@ from __future__ import annotations
 
 import argparse
 
-import numpy as np
-
 from app.config import load_config
 from app.ml.artifacts import read_metadata
 from app.ml.dataset import build_dataset, load_ticks_csv
 from app.ml.pipeline import evaluate_demo_promotion, start_demo_validation
 from app.ml.predict import ModelPredictor
-from app.ml.statistics import break_even_from_ratio, edge_test
+from app.ml.statistics import edge_test
 
 
 def evaluate_ticks(model_dir: str, ticks: str, alpha: float, margin: float) -> None:
     pred = ModelPredictor.load(model_dir)
     meta = pred.meta
     epochs, prices = load_ticks_csv(ticks)
-    ds = build_dataset(epochs, prices, meta.label_horizon).stride(meta.label_horizon)
-    p_up = pred.model.predict_up(ds.x)
-    p_put = np.clip(1.0 - p_up - pred.model.tie_rate, 0.0, 1.0)
-    be = break_even_from_ratio(meta.payout_assumption)
+    ds = build_dataset(epochs, prices, meta.label_horizon, pred.spec).stride(meta.label_horizon)
+    p_up, p_put = pred.model.direction_probs(ds.x)
+    be = meta.break_even
     thr = be + margin
     call = (p_up >= thr) & (p_up >= p_put)
     put = (p_put >= thr) & (p_put > p_up)
     wins = int(ds.up[call].sum() + ds.down[put].sum())
     trades = int(call.sum() + put.sum())
     test = edge_test(wins, trades, be, alpha)
-    print(f"model={meta.model_version} status={meta.status} samples={len(ds)} trades={trades}")
+    print(
+        f"model={meta.model_version} product={meta.product} status={meta.status} "
+        f"samples={len(ds)} trades={trades}"
+    )
     print(
         f"win_rate={test.win_rate:.4f} break_even={be:.4f} "
         f"CI95=[{test.ci_low:.4f},{test.ci_high:.4f}] p={test.p_value:.4f} "

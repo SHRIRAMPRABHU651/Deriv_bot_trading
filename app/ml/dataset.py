@@ -11,6 +11,7 @@ import pandas as pd
 
 from app.ml.features import WINDOW, batch_features
 from app.ml.labels import make_labels
+from app.products import Product, ProductSpec, make_product_labels
 
 FloatArray = npt.NDArray[np.float64]
 BoolArray = npt.NDArray[np.bool_]
@@ -24,6 +25,7 @@ class Dataset:
     tie: BoolArray
     epochs: npt.NDArray[np.int64]
     horizon: int
+    spec: ProductSpec | None = None
 
     def __len__(self) -> int:
         return len(self.up)
@@ -40,20 +42,41 @@ class Dataset:
             self.tie[start:stop],
             self.epochs[start:stop],
             self.horizon,
+            self.spec,
         )
 
     def stride(self, step: int, offset: int = 0) -> Dataset:
         """Non-overlapping subsample: with step >= horizon no two labels share a future tick."""
         idx = np.arange(offset, len(self), step)
         return Dataset(
-            self.x[idx], self.up[idx], self.down[idx], self.tie[idx], self.epochs[idx], self.horizon
+            self.x[idx],
+            self.up[idx],
+            self.down[idx],
+            self.tie[idx],
+            self.epochs[idx],
+            self.horizon,
+            self.spec,
         )
 
 
-def build_dataset(epochs: npt.NDArray[np.int64], prices: FloatArray, horizon: int) -> Dataset:
-    """Row i <-> tick index i + WINDOW - 1; only rows with a full future horizon are kept."""
+def build_dataset(
+    epochs: npt.NDArray[np.int64],
+    prices: FloatArray,
+    horizon: int,
+    spec: ProductSpec | None = None,
+) -> Dataset:
+    """Row i <-> tick index i + WINDOW - 1; only rows with a full future horizon are kept.
+
+    Without a spec (or with Rise/Fall) labels are up/down/tie after `horizon` ticks. For the other
+    products `up`/`down` mean "the bullish/bearish trade reaches its profit target" (see
+    app.products); `horizon` must then equal `spec.horizon_ticks`."""
     feats = batch_features(prices)
-    up, down, tie = make_labels(prices, horizon)
+    if spec is None or spec.product is Product.RISE_FALL:
+        up, down, tie = make_labels(prices, horizon)
+    else:
+        if spec.horizon_ticks != horizon:
+            raise ValueError("horizon must equal spec.horizon_ticks")
+        up, down, tie = make_product_labels(prices, spec)
     n = min(len(feats), len(up) - (WINDOW - 1))
     if n <= 0:
         return Dataset(
@@ -63,9 +86,10 @@ def build_dataset(epochs: npt.NDArray[np.int64], prices: FloatArray, horizon: in
             np.zeros(0, bool),
             np.zeros(0, np.int64),
             horizon,
+            spec,
         )
     sl = slice(WINDOW - 1, WINDOW - 1 + n)
-    return Dataset(feats[:n], up[sl], down[sl], tie[sl], epochs[sl], horizon)
+    return Dataset(feats[:n], up[sl], down[sl], tie[sl], epochs[sl], horizon, spec)
 
 
 def load_ticks_csv(path: str | Path) -> tuple[npt.NDArray[np.int64], FloatArray]:

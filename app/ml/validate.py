@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import numpy.typing as npt
@@ -10,7 +10,7 @@ import numpy.typing as npt
 from app.ml.calibrate import Metrics, calibration_table, classification_metrics
 from app.ml.dataset import Dataset
 from app.ml.statistics import EdgeTest, break_even_from_ratio, edge_test
-from app.ml.train import MODEL_KINDS, TrainedModel, fit_with_calibration
+from app.ml.train import MODEL_KINDS, TrainedModel, fit_heads
 
 NO_EDGE = "NO EVIDENCE OF EDGE"
 EDGE = "EDGE EVIDENCE"
@@ -68,13 +68,11 @@ class WalkForwardResult:
 
 
 def _select_and_score(
-    p_up: npt.NDArray[np.float64],
+    p_call: npt.NDArray[np.float64],
+    p_put: npt.NDArray[np.float64],
     ds: Dataset,
-    tie_rate: float,
     threshold: float,
 ) -> tuple[int, int]:
-    p_call = p_up
-    p_put = np.clip(1.0 - p_up - tie_rate, 0.0, 1.0)
     call = (p_call >= threshold) & (p_call >= p_put)
     put = (p_put >= threshold) & (p_put > p_call)
     trades = int(call.sum() + put.sum())
@@ -90,6 +88,7 @@ def run_walk_forward(
     gap: int,
     test_size: int,
     payout_ratio: float = 1.95,
+    terms: tuple[float, float] | None = None,
     edge_margin: float = 0.03,
     alpha: float = 0.05,
     shuffle_labels: bool = False,
@@ -97,12 +96,13 @@ def run_walk_forward(
     step: int | None = None,
 ) -> WalkForwardResult:
     """Evaluate on non-overlapping test samples (stride = horizon). Trades are taken only when
-    the calibrated probability clears break-even + margin, where break-even = 1 / payout_ratio.
-    NOTE: payout_ratio is a research assumption; the live bot uses the actual proposal payout."""
+    the calibrated probability clears break-even + margin, with break-even = L / (W + L) from
+    `terms` = (win, loss) per unit stake, or 1 / payout_ratio for a plain Rise/Fall.
+    NOTE: these terms are a research assumption; the live bot uses the ACTUAL proposal."""
     if kind not in MODEL_KINDS:
         raise ValueError(f"unknown model kind {kind!r}; choose from {MODEL_KINDS}")
     rng = np.random.default_rng(seed)
-    be = break_even_from_ratio(payout_ratio)
+    be = terms[1] / (terms[0] + terms[1]) if terms else break_even_from_ratio(payout_ratio)
     folds = walk_forward_splits(
         len(ds),
         initial_train=initial_train,
@@ -117,20 +117,17 @@ def run_walk_forward(
     total_trades = total_wins = 0
     for fold in folds:
         train = ds.slice(*fold.train)
-        y_train = train.up.copy()
         if shuffle_labels:
-            y_train = rng.permutation(y_train)
+            train = replace(train, up=rng.permutation(train.up), down=rng.permutation(train.down))
         try:
-            model: TrainedModel = fit_with_calibration(
-                train.x, y_train, train.tie_rate, kind=kind, horizon=ds.horizon, seed=seed
-            )
+            model: TrainedModel = fit_heads(train, kind=kind, seed=seed)
         except ValueError:
             continue
         test = ds.slice(*fold.test).stride(ds.horizon)
         if len(test) < 10:
             continue
-        p_up = model.predict_up(test.x)
-        trades, wins = _select_and_score(p_up, test, train.tie_rate, be + edge_margin)
+        p_up, p_down = model.direction_probs(test.x)
+        trades, wins = _select_and_score(p_up, p_down, test, be + edge_margin)
         results.append(FoldResult(fold, classification_metrics(test.up, p_up), trades, wins))
         all_p.append(p_up)
         all_y.append(test.up)
@@ -180,6 +177,7 @@ def shuffled_label_control(
     min_trades: int = 300,
     n_comparisons: int = 1,
     payout_ratio: float = 1.95,
+    terms: tuple[float, float] | None = None,
     edge_margin: float = 0.03,
     seed: int = 1000,
 ) -> Verdict:
@@ -194,6 +192,7 @@ def shuffled_label_control(
             gap=gap,
             test_size=test_size,
             payout_ratio=payout_ratio,
+            terms=terms,
             edge_margin=edge_margin,
             alpha=alpha,
             shuffle_labels=True,

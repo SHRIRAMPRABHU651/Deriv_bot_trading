@@ -95,10 +95,39 @@ authenticated connection. `ping` is `{"ping": 1}`.
   Minimum stake default `0.35` (configurable; the proposal's `min_stake`/`max_stake` are additionally enforced when
   present).
 
+### Trade types (Multipliers, Accumulators, Turbos, Vanillas) **[schema]**
+Request fields (`proposal_send.json`): `contract_type` ∈ {`MULTUP`, `MULTDOWN`, `ACCU`, `TURBOSLONG`, `TURBOSSHORT`,
+`VANILLALONGCALL`, `VANILLALONGPUT`, …}; `multiplier` (number); `growth_rate` (number, accumulators); `barrier`
+(string matching `^[+-]?[0-9]+\.?[0-9]*$`, **relative when signed**; Synthetic Indices also accept absolute);
+`limit_order` = `{take_profit, stop_loss}` — the schema says it applies to **`MULTUP`/`MULTDOWN`/`ACCU` only**
+(so turbos/vanillas have no native take-profit and the bot manages turbo exits itself); `duration` (integer) +
+`duration_unit` (`t s m h d`); `amount` + `basis: stake`.
+Response fields (`proposal_receive.json`): `ask_price`, `commission` ("changed in percentage"), `spot`,
+`display_number_of_contracts` (**only vanilla/turbos**), `contract_details.barrier` / `barrier_spot_distance`,
+`contract_details.tick_size_barrier_percentage` and `maximum_ticks` (accumulators), `validation_params.max_ticks`,
+`limit_order`, `min_stake`/`max_stake` (vanilla/turbos). Open contracts (`proposal_open_contract`): `bid_price`,
+`profit`, `is_valid_to_sell`, `status ∈ open|sold|won|lost|cancelled`. **Selling**: `{"sell": contract_id, "price": 0}`
+= sell at market (`sell_send.json`).
+
+How the bot maps them (see `app/products.py`): multipliers use native TP/SL; accumulators use a native take-profit
+equal to the growth after N ticks and a hold-cap sell; turbos use a knock-out barrier `-offset`/`+offset` and a
+bot-managed take-profit (`sell` when `profit ≥ pct × cost`); vanillas are held to expiry. The win/loss amounts fed to
+the edge gate come from the proposal (`ask_price`, `commission`, limit orders, contracts, barrier).
+
+**Not confirmed for these products (verify on DEMO; each is isolated in `app/products.py` / `protocol.py`):**
+- whether the new Options WebSocket accepts the legacy field names above unchanged;
+- the **unit of `commission`** (the bot assumes the worse of `ask − stake` and `commission` read as an amount);
+- the **unit of `tick_size_barrier_percentage`** (the bot reads it as a percent and divides by 100);
+- which symbols/durations/multipliers/growth rates your account offers per product (a rejected proposal simply
+  fails the order); whether tick durations are allowed for turbos/vanillas (otherwise set `duration_unit` and
+  `horizon_ticks` consistently, e.g. minutes);
+- the barrier semantics of turbos (`barrier` offset vs absolute) and the exact `barrier_spot_distance` format;
+- whether an accumulator's per-tick barrier is re-centred on the previous spot (the labels assume so).
+
 ## 2. Endpoints/messages used by the code
 `app/deriv/auth.py` (REST) · `app/deriv/protocol.py` (builders/parsers) · `app/deriv/websocket.py` (transport) ·
 `app/deriv/client.py` (high-level). Messages sent: `ping`, `balance`, `ticks`, `ticks_history`, `proposal`, `buy`,
-`proposal_open_contract`, `portfolio`, `forget`.
+`proposal_open_contract`, `portfolio`, `sell`, `forget`.
 
 ## 3. Account verification behaviour
 - Before trading, `verify_account()` calls the accounts list and requires the configured account id to exist **and**

@@ -141,7 +141,14 @@ class Controller:
     def reload_model(self) -> bool:
         """(Re)load the artifact. Any problem => no model => NO TRADING."""
         try:
-            self.predictor = ModelPredictor.load(self.config.app.model_dir, FEATURE_VERSION)
+            loaded = ModelPredictor.load(self.config.app.model_dir, FEATURE_VERSION)
+            wanted = self.config.trading.product
+            if loaded.spec.label_key() != wanted.label_key():
+                raise ValueError(
+                    f"model was trained for {loaded.spec.label_key()}, "
+                    f"configured trade terms are {wanted.label_key()}"
+                )
+            self.predictor = loaded
             self.model_error = None
         except (ArtifactError, OSError, KeyError, ValueError) as exc:
             self.predictor = None
@@ -160,12 +167,16 @@ class Controller:
         s = self.config.strategy
         if s.name == "ema":
             return EmaStrategy(
-                s.ema_fast, s.ema_slow, self.config.trading.duration_ticks, s.version
+                s.ema_fast,
+                s.ema_slow,
+                self.config.trading.product.horizon_ticks,
+                s.version,
+                self.config.trading.product.product.value,
             )
         return MLStrategy(
             s.version,
-            min_probability=0.5 + self.config.ml.edge_margin,
-            horizon=self.config.trading.duration_ticks,
+            margin=self.config.ml.edge_margin,
+            horizon=self.config.trading.product.horizon_ticks,
         )
 
     # ---- mode -------------------------------------------------------------------------------
@@ -617,6 +628,7 @@ class Controller:
         feed_age = {s: self.feed.age(s, now) for s in self.config.trading.symbols}
         return {
             "mode": mode.value,
+            "product": self.config.trading.product.model_dump(mode="json"),
             "running": self.running,
             "trading_enabled": self.trading_enabled and self.predictor is not None,
             "account": {

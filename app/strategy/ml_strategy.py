@@ -8,6 +8,7 @@ import time
 from app.ml.features import SymbolFeatureState
 from app.ml.predict import ModelPredictor
 from app.models.schemas import Direction, Signal, Tick
+from app.products import assumed_break_even
 from app.strategy.base import make_signal_id
 
 log = logging.getLogger("derivbot.strategy")
@@ -16,9 +17,18 @@ log = logging.getLogger("derivbot.strategy")
 class MLStrategy:
     name = "ml"
 
-    def __init__(self, version: str = "1", min_probability: float = 0.5, horizon: int = 10) -> None:
+    def __init__(
+        self,
+        version: str = "1",
+        min_probability: float | None = None,
+        horizon: int = 10,
+        margin: float = 0.03,
+    ) -> None:
         self.version = version
-        self._min_p = min_probability  # coarse pre-filter only; the risk gate uses real payout
+        # Coarse pre-filter only (avoids a proposal per tick); the risk gate uses the real terms.
+        self._fixed_min_p = min_probability
+        self._margin = margin
+        self._min_p = 0.5 if min_probability is None else min_probability
         self._horizon = horizon
         self._features: dict[str, SymbolFeatureState] = {}  # independent state per symbol
         self._last_signal_tick: dict[str, int] = {}
@@ -34,6 +44,8 @@ class MLStrategy:
         self._predictor = predictor
         if predictor is not None:
             self._horizon = predictor.horizon
+            if self._fixed_min_p is None:
+                self._min_p = max(0.5, assumed_break_even(predictor.spec) + self._margin - 0.02)
 
     @property
     def predictor(self) -> ModelPredictor | None:
@@ -75,6 +87,8 @@ class MLStrategy:
             tick_received_at=tick.received_at,
             created_at=time.time(),
             features_version=predictor.meta.feature_version,
+            product=predictor.spec.product.value,
+            entry_price=tick.quote,
         )
 
 

@@ -43,6 +43,11 @@ class MockDeriv:
         self.ask_price_override: Decimal | None = None
         self.last_quote = 100.0
         self._props: dict[str, dict[str, Any]] = {}
+        self.commission = Decimal(0)
+        self.accu_barrier_pct = 0.0006  # fraction of spot per tick
+        self.turbo_contracts: float | None = None  # None => stake / knock-out distance
+        self.vanilla_contracts = 15.0
+        self.sells: list[int] = []
 
     # ---- lifecycle --------------------------------------------------------------------------
     async def start(self) -> str:
@@ -83,7 +88,10 @@ class MockDeriv:
             "is_sold": int(c["sold"]),
             "is_expired": int(c["sold"]),
             "status": c["status"],
-            "profit": float(c["profit"]) if c["sold"] else 0.0,
+            "profit": float(c["profit"]) if c["sold"] else float(c["profit_open"]),
+            "bid_price": float(c["buy_price"] + c["profit_open"]) if not c["sold"] else None,
+            "is_valid_to_sell": 0 if c["sold"] else 1,
+            "limit_order": c["limit_order"],
             "buy_price": float(c["buy_price"]),
             "sell_price": float(c["sell_price"]) if c["sold"] else None,
             "payout": float(c["payout"]),
@@ -149,6 +157,8 @@ class MockDeriv:
             "buy_price": price,
             "payout": payout,
             "sold": False,
+            "profit_open": Decimal(0),
+            "limit_order": None,
             "status": "open",
             "profit": Decimal(0),
             "sell_price": Decimal(0),
@@ -230,36 +240,11 @@ class MockDeriv:
                 },
             )
         elif key == "proposal":
-            if self.proposal_delay:
-                await asyncio.sleep(self.proposal_delay)
-            stake = Decimal(str(req["amount"]))
-            ask = self.ask_price_override if self.ask_price_override is not None else stake
-            pid = f"prop-{self._next_prop}"
-            self._next_prop += 1
-            self._props[pid] = {
-                "ask": ask,
-                "payout": stake * self.payout_ratio,
-                "symbol": req["symbol"],
-                "type": req["contract_type"],
-            }
-            await self._send(
-                ws,
-                {
-                    "msg_type": "proposal",
-                    "req_id": rid,
-                    "proposal": {
-                        "id": pid,
-                        "ask_price": float(ask),
-                        "payout": float(stake * self.payout_ratio),
-                        "spot": self.last_quote,
-                        "longcode": "mock rise/fall",
-                        "min_stake": float(self.min_stake),
-                        "max_stake": 1000,
-                    },
-                },
-            )
+            await self._proposal(ws, req)
         elif key == "buy":
             await self._buy(ws, req)
+        elif key == "sell":
+            await self._sell(ws, req)
         elif key == "proposal_open_contract":
             cid = int(req["contract_id"])
             if cid not in self.contracts:
@@ -303,6 +288,114 @@ class MockDeriv:
         else:
             await self._send(ws, self._error(req, "UnrecognisedRequest", f"unknown {key}"))
 
+    # ---- multi-product support -------------------------------------------------------------
+    async def _proposal(self, ws: ServerConnection, req: dict[str, Any]) -> None:
+        rid = req.get("req_id")
+        if self.proposal_delay:
+            await asyncio.sleep(self.proposal_delay)
+        stake = Decimal(str(req["amount"]))
+        ctype = str(req["contract_type"])
+        spot = self.last_quote
+        ask = self.ask_price_override if self.ask_price_override is not None else stake
+        payout = stake * self.payout_ratio if ctype in ("CALL", "PUT") else Decimal(0)
+        body: dict[str, Any] = {
+            "longcode": f"mock {ctype}",
+            "spot": spot,
+            "min_stake": 0.35,
+            "max_stake": 1000,
+        }
+        details: dict[str, Any] = {}
+        if ctype in ("MULTUP", "MULTDOWN"):
+            ask = ask + self.commission
+            body["commission"] = float(self.commission)
+        elif ctype == "ACCU":
+            details["tick_size_barrier_percentage"] = str(self.accu_barrier_pct * 100)
+            details["maximum_ticks"] = 100
+            body["validation_params"] = {"max_ticks": 100}
+        elif ctype.startswith("TURBOS"):
+            off = abs(float(str(req["barrier"])))
+            barrier = spot - off if ctype == "TURBOSLONG" else spot + off
+            details["barrier"] = f"{barrier:.5f}"
+            body["display_number_of_contracts"] = str(
+                self.turbo_contracts if self.turbo_contracts else float(ask) / off
+            )
+        elif ctype.startswith("VANILLA"):
+            off = float(str(req["barrier"]))  # signed offset
+            details["barrier"] = f"{spot + off:.5f}"
+            body["display_number_of_contracts"] = str(self.vanilla_contracts)
+        if details:
+            body["contract_details"] = details
+        pid = f"prop-{self._next_prop}"
+        self._next_prop += 1
+        self._props[pid] = {
+            "ask": ask,
+            "payout": payout,
+            "symbol": req["symbol"],
+            "type": ctype,
+            "limit_order": req.get("limit_order"),
+        }
+        body.update({"id": pid, "ask_price": float(ask), "payout": float(payout)})
+        await self._send(ws, {"msg_type": "proposal", "req_id": rid, "proposal": body})
+
+    async def close_with_profit(self, cid: int, profit: float, *, notify: bool = True) -> None:
+        """Close a contract with an explicit profit (take-profit / stop-loss / knock-out)."""
+        c = self.contracts[cid]
+        if c["sold"]:
+            return
+        p = Decimal(str(profit))
+        c["sold"] = True
+        c["status"] = "won" if p > 0 else "lost"
+        c["profit"] = p
+        c["sell_price"] = c["buy_price"] + p
+        self.balance += max(c["buy_price"] + p, Decimal(0))
+        if notify:
+            await self.push_contract(cid)
+
+    def set_profit(self, cid: int, profit: float) -> None:
+        """Change an open contract's current profit (bid = buy price + profit)."""
+        self.contracts[cid]["profit_open"] = Decimal(str(profit))
+
+    async def push_contract(self, cid: int) -> None:
+        for ws, sub_cid, req_id in list(self.contract_subs):
+            if sub_cid == cid:
+                await self._send(
+                    ws,
+                    {
+                        "msg_type": "proposal_open_contract",
+                        "req_id": req_id,
+                        "proposal_open_contract": self._poc(cid),
+                        "subscription": {"id": f"sub-poc-{req_id}"},
+                    },
+                )
+
+    async def _sell(self, ws: ServerConnection, req: dict[str, Any]) -> None:
+        rid = req.get("req_id")
+        cid = int(req["sell"])
+        c = self.contracts.get(cid)
+        if c is None or c["sold"]:
+            await self._send(ws, self._error(req, "ContractSellError", "already sold"))
+            return
+        self.sells.append(cid)
+        proceeds = c["buy_price"] + c["profit_open"]
+        c["sold"] = True
+        c["status"] = "sold"
+        c["sell_price"] = proceeds
+        c["profit"] = c["profit_open"]
+        self.balance += proceeds
+        await self._send(
+            ws,
+            {
+                "msg_type": "sell",
+                "req_id": rid,
+                "sell": {
+                    "contract_id": cid,
+                    "sold_for": float(proceeds),
+                    "balance_after": float(self.balance),
+                },
+            },
+        )
+        await self.push_contract(cid)
+
     async def _buy(self, ws: ServerConnection, req: dict[str, Any]) -> None:
         rid = req.get("req_id")
         if self.buy_delay:
@@ -324,6 +417,7 @@ class MockDeriv:
             )
             return
         cid = self._new_contract(prop["symbol"], prop["type"], prop["ask"], prop["payout"])
+        self.contracts[cid]["limit_order"] = prop.get("limit_order")
         if self.drop_on_buy:
             await ws.close()
             return

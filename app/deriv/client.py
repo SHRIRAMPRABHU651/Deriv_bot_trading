@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from app import products
 from app.config import AppConfig, Settings
 from app.deriv import protocol
 from app.deriv.auth import DerivAuth
@@ -20,6 +21,7 @@ from app.models.schemas import (
     BalanceInfo,
     BuyResult,
     ContractUpdate,
+    Direction,
     Mode,
     Proposal,
     Tick,
@@ -91,15 +93,15 @@ class DerivClient:
         return protocol.parse_history(msg)
 
     # ---- trading ---------------------------------------------------------------------------
-    async def proposal(self, symbol: str, contract_type: str, stake: Decimal) -> Proposal:
+    async def proposal(self, symbol: str, direction: Direction, stake: Decimal) -> Proposal:
         cfg = self._cfg.trading
+        spec = cfg.product
         msg = await self.ws.request(
             protocol.proposal(
                 symbol=symbol,
-                contract_type=contract_type,
                 amount=stake,
                 currency=cfg.currency,
-                duration=cfg.duration_ticks,
+                product_params=products.proposal_params(spec, direction, stake),
             ),
             timeout_s=self._cfg.deriv.proposal_timeout_s,
             safe_to_retry=True,
@@ -119,6 +121,11 @@ class DerivClient:
             safe_to_retry=False,
         )
         return protocol.parse_buy(msg)
+
+    async def sell(self, contract_id: int) -> None:
+        """Close a position at market. Reduces risk, so it needs no permit; an 'already sold'
+        error is harmless and surfaces to the caller as DerivError."""
+        await self.ws.request(protocol.sell(contract_id), safe_to_retry=False)
 
     async def contract_status(self, contract_id: int) -> ContractUpdate | None:
         msg = await self.ws.request(

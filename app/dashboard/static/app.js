@@ -80,6 +80,7 @@ function render(s) {
   ]);
   const probs = Object.entries(s.probabilities).map(([k, v]) => k + " ↑" + pct(v.CALL) + " ↓" + pct(v.PUT)).join(" | ");
   dl($("model"), [
+    ["Trade type", s.product.product + " · N=" + s.product.horizon_ticks + " ticks"],
     ["Model status", s.model.status], ["Model version", s.model.version], ["Model error", s.model.error],
     ["Latest probability", probs || null], ["Edge margin", s.edge_margin],
   ]);

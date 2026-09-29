@@ -45,6 +45,8 @@ class ModelMetadata:
     p_value: float | None
     calibration_metrics: dict[str, Any]
     tie_rate: float
+    product: str = "rise_fall"
+    spec: dict[str, Any] = field(default_factory=dict)
     verdict: str = ""
     verdict_reasons: list[str] = field(default_factory=list)
     demo_stats: dict[str, Any] = field(default_factory=dict)

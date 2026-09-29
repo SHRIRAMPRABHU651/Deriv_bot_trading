@@ -17,6 +17,7 @@ from app.controller import Controller
 from app.deriv.client import DerivClient
 from app.deriv.reconnect import Backoff
 from app.models.schemas import Mode
+from app.products import Product, ProductSpec
 from app.storage.database import Database
 from tests.mocks.deriv_mock import MockDeriv, make_http
 from tests.mocks.stubs import make_stub_model
@@ -42,14 +43,16 @@ def make_settings(
     )
 
 
-def make_config(tmp_path: Path, **profile_overrides: object) -> AppConfig:
+def make_config(
+    tmp_path: Path, *, spec: ProductSpec | None = None, **profile_overrides: object
+) -> AppConfig:
     cfg = AppConfig()
     cfg.app.db_path = str(tmp_path / "bot.db")
     cfg.app.model_dir = str(tmp_path / "model")
     cfg.app.log_dir = str(tmp_path / "logs")
     cfg.app.allowed_hosts = ["127.0.0.1", "localhost"]
     cfg.trading.symbols = ["R_100"]
-    cfg.trading.duration_ticks = 5
+    cfg.trading.product = spec or ProductSpec(product=Product.RISE_FALL, horizon_ticks=5)
     cfg.trading.max_signal_age_s = 5.0
     cfg.deriv.requests_per_second = 500.0
     cfg.deriv.burst = 100

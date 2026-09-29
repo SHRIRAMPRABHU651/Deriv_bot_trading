@@ -23,7 +23,8 @@ def match_portfolio_contract(
     slack_s: float = 10.0,
 ) -> dict[str, Any] | None:
     """Find the unique portfolio entry that can only be this order's purchase."""
-    stake = Decimal(str(order["stake"]))
+    # The price actually paid is the proposal's ask (stake + any fee), stored at authorisation.
+    stake = Decimal(str(order["ask_price"] or order["stake"]))
     candidates: list[dict[str, Any]] = []
     for c in portfolio:
         try:
@@ -34,7 +35,8 @@ def match_portfolio_contract(
             continue
         if str(c.get("symbol", c.get("underlying", ""))) != str(order["symbol"]):
             continue
-        if str(c.get("contract_type", "")) != str(order["direction"]):
+        expected = order["contract_type"] or order["direction"]
+        if str(c.get("contract_type", "")) != str(expected):
             continue
         try:
             if abs(dec(c.get("buy_price")) - stake) > Decimal("0.000001"):

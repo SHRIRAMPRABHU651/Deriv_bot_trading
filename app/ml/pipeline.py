@@ -23,7 +23,7 @@ from app.ml.artifacts import ModelMetadata, read_metadata, save_artifact, set_st
 from app.ml.dataset import Dataset, build_dataset
 from app.ml.features import FEATURE_VERSION
 from app.ml.statistics import EdgeTest, break_even_from_ratio, edge_test
-from app.ml.train import fit_with_calibration
+from app.ml.train import fit_heads
 from app.ml.validate import (
     EDGE,
     NO_EDGE,
@@ -33,6 +33,7 @@ from app.ml.validate import (
     shuffled_label_control,
 )
 from app.models.schemas import ModelStatus
+from app.products import Product, ProductSpec, assumed_terms
 
 MAX_CALIBRATION_GAP = 0.05  # |predicted - actual| per calibration bin
 
@@ -90,8 +91,17 @@ def train_and_validate(
     initial_train_fraction: float = 0.5,
     test_fraction: float = 0.1,
     seed: int = 7,
+    spec: ProductSpec | None = None,
 ) -> TrainReport:
-    ds: Dataset = build_dataset(epochs, prices, horizon)
+    if spec is None:  # classic Rise/Fall
+        spec = ProductSpec(
+            product=Product.RISE_FALL, horizon_ticks=horizon, payout_ratio=payout_ratio
+        )
+    horizon = spec.horizon_ticks
+    win, loss = assumed_terms(spec)
+    terms = (win, loss)
+    payout_ratio = (win + loss) / loss  # payout-equivalent ratio of the assumed terms
+    ds: Dataset = build_dataset(epochs, prices, horizon, spec)
     n = len(ds)
     initial_train = int(n * initial_train_fraction)
     test_size = max(int(n * test_fraction), 200)
@@ -106,6 +116,7 @@ def train_and_validate(
         gap=gap,
         test_size=test_size,
         payout_ratio=payout_ratio,
+        terms=terms,
         edge_margin=edge_margin,
         alpha=alpha,
         seed=seed,
@@ -122,6 +133,7 @@ def train_and_validate(
         min_trades=min_trades,
         n_comparisons=n_comparisons,
         payout_ratio=payout_ratio,
+        terms=terms,
         edge_margin=edge_margin,
     )
     cal_gap = calibration_gap(real.calibration)
@@ -132,8 +144,14 @@ def train_and_validate(
     else:
         status = ModelStatus.REJECTED
 
-    final = fit_with_calibration(ds.x, ds.up, ds.tie_rate, kind=kind, horizon=horizon, seed=seed)
-    version = f"{symbol}-{kind}-h{horizon}-{datetime.now(UTC):%Y%m%d%H%M%S}"
+    try:
+        final = fit_heads(ds, kind=kind, seed=seed)
+    except ValueError as exc:
+        raise ValueError(
+            f"{exc}: the profit target is (almost) never or always reached with these trade "
+            "terms on this data - adjust the terms (targets, barriers, horizon)"
+        ) from exc
+    version = f"{symbol}-{spec.product.value}-{kind}-h{horizon}-{datetime.now(UTC):%Y%m%d%H%M%S}"
     n_cal = int(n * 0.25)
     meta = ModelMetadata(
         model_version=version,
@@ -147,7 +165,9 @@ def train_and_validate(
         validation_samples=n_cal,
         test_samples=int(len(real.y)),
         payout_assumption=payout_ratio,
-        break_even=break_even_from_ratio(payout_ratio),
+        break_even=loss / (win + loss),
+        product=spec.product.value,
+        spec=spec.model_dump(mode="json"),
         edge_margin=edge_margin,
         observed_win_rate=real.edge.win_rate if real.trades else None,
         confidence_interval=[real.edge.ci_low, real.edge.ci_high],
@@ -213,15 +233,16 @@ def evaluate_demo_promotion(
     conn = sqlite3.connect(str(db_path))
     try:
         rows = conn.execute(
-            "SELECT t.profit, t.break_even FROM trades t JOIN orders o ON o.order_id=t.order_id "
+            "SELECT t.profit, t.break_even, t.target_hit FROM trades t "
+            "JOIN orders o ON o.order_id=t.order_id "
             "JOIN signals s ON s.signal_id=o.signal_id "
             "WHERE t.mode='demo' AND t.settled_at IS NOT NULL AND s.model_version=?",
             (meta.model_version,),
         ).fetchall()
     finally:
         conn.close()
-    wins = sum(1 for p, _ in rows if Decimal(str(p)) > 0)
-    bes = [float(b) for _, b in rows if b is not None]
+    wins = sum(1 for p, _, hit in rows if (bool(hit) if hit is not None else Decimal(str(p)) > 0))
+    bes = [float(b) for _, b, _ in rows if b is not None]
     be = sum(bes) / len(bes) if bes else break_even_from_ratio(meta.payout_assumption)
     test = edge_test(wins, len(rows), be, alpha)
     if len(rows) < min_demo_trades:

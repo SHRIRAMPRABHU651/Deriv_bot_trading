@@ -52,6 +52,14 @@ def dec(value: Any) -> Decimal:
         raise ProtocolError(f"not a decimal: {value!r}") from exc
 
 
+def _num(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out == out and abs(out) != float("inf") else None
+
+
 def _opt_dec(value: Any) -> Decimal | None:
     return None if value is None else dec(value)
 
@@ -86,22 +94,25 @@ def ticks_history(
 def proposal(
     *,
     symbol: str,
-    contract_type: str,
     amount: Decimal,
     currency: str,
-    duration: int,
-    duration_unit: str = "t",
+    product_params: dict[str, Any],
 ) -> dict[str, Any]:
+    """`product_params` comes from app.products.proposal_params (contract_type, duration,
+    multiplier, growth_rate, barrier, limit_order ...)."""
     return {
         "proposal": 1,
         "amount": float(amount),  # schema: number
         "basis": "stake",
-        "contract_type": contract_type,
         "currency": currency,
-        "duration": duration,
-        "duration_unit": duration_unit,
         "symbol": symbol,
+        **product_params,
     }
+
+
+def sell(contract_id: int) -> dict[str, Any]:
+    """Sell at market (price 0 = "sell at market" in the schema)."""
+    return {"sell": contract_id, "price": 0}
 
 
 def buy(
@@ -163,10 +174,19 @@ def parse_proposal(msg: dict[str, Any]) -> Proposal:
     try:
         vp = body.get("validation_params") or {}
         stake_vp = vp.get("stake") or {}
+        details = body.get("contract_details") or {}
+        pct = _num(details.get("tick_size_barrier_percentage"))
+        max_ticks = vp.get("max_ticks", details.get("maximum_ticks"))
         return Proposal(
             proposal_id=str(body["id"]),
             ask_price=dec(body["ask_price"]),
-            payout=dec(body["payout"]),
+            payout=dec(body.get("payout", 0)),  # multipliers/accumulators may carry no payout
+            commission=_num(body.get("commission")),
+            contracts=_num(body.get("display_number_of_contracts")),
+            barrier_abs=_num(details.get("barrier")),
+            # schema: "tick size barrier in percentage" => percent; convert to a fraction
+            barrier_pct_per_tick=None if pct is None else pct / 100.0,
+            max_ticks=None if max_ticks is None else int(max_ticks),
             spot=None if body.get("spot") is None else float(body["spot"]),
             longcode=str(body.get("longcode", "")),
             min_stake=_opt_dec(body.get("min_stake", stake_vp.get("min"))),
@@ -184,7 +204,7 @@ def parse_buy(msg: dict[str, Any]) -> BuyResult:
         return BuyResult(
             contract_id=int(body["contract_id"]),
             buy_price=dec(body["buy_price"]),
-            payout=dec(body["payout"]),
+            payout=dec(body.get("payout", 0)),
             balance_after=_opt_dec(body.get("balance_after")),
             purchase_time=int(body["purchase_time"]),
             start_time=None if body.get("start_time") is None else int(body["start_time"]),
@@ -223,6 +243,8 @@ def parse_contract(msg: dict[str, Any]) -> ContractUpdate | None:
         symbol=None if body.get("underlying") is None else str(body["underlying"]),
         contract_type=None if body.get("contract_type") is None else str(body["contract_type"]),
         purchase_time=None if body.get("purchase_time") is None else int(body["purchase_time"]),
+        bid_price=_opt_dec(body.get("bid_price")),
+        valid_to_sell=bool(body.get("is_valid_to_sell", 0)),
     )
 
 

@@ -108,7 +108,7 @@ class Repositories:
         now = utc_iso(ts)
         self.db.execute(
             "INSERT INTO orders(order_id,signal_id,mode,symbol,direction,stake,state,probability,"
-            "break_even,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "break_even,created_at,updated_at,product) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 order_id,
                 signal.signal_id,
@@ -121,6 +121,7 @@ class Repositories:
                 break_even,
                 now,
                 now,
+                signal.product,
             ),
         )
 
@@ -165,11 +166,12 @@ class Repositories:
         probability: float | None,
         break_even: float | None,
         ts: datetime,
+        product: str = "rise_fall",
     ) -> None:
         self.db.execute(
             "INSERT OR IGNORE INTO trades(contract_id,order_id,mode,symbol,direction,stake,"
-            "buy_price,payout,state,probability,break_even,opened_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "buy_price,payout,state,probability,break_even,opened_at,product) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 contract_id,
                 order_id,
@@ -183,6 +185,7 @@ class Repositories:
                 probability,
                 break_even,
                 utc_iso(ts),
+                product,
             ),
         )
 
@@ -194,11 +197,21 @@ class Repositories:
         entry_spot: float | None,
         exit_spot: float | None,
         ts: datetime,
+        *,
+        target_hit: bool | None = None,
     ) -> None:
         self.db.execute(
-            "UPDATE trades SET state=?, profit=?, entry_spot=?, exit_spot=?, settled_at=? "
-            "WHERE contract_id=?",
-            (state.value, str(profit), entry_spot, exit_spot, utc_iso(ts), contract_id),
+            "UPDATE trades SET state=?, profit=?, entry_spot=?, exit_spot=?, settled_at=?, "
+            "target_hit=? WHERE contract_id=?",
+            (
+                state.value,
+                str(profit),
+                entry_spot,
+                exit_spot,
+                utc_iso(ts),
+                None if target_hit is None else int(target_hit),
+                contract_id,
+            ),
         )
 
     def settled_trades(

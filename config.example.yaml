@@ -23,7 +23,33 @@ deriv:
 trading:
   symbols: [R_100]
   currency: USD
-  duration_ticks: 10           # N: contract expiry in ticks == label horizon
+  # ---- Trade type (the four Options products in the Deriv app + classic Rise/Fall) ----------
+  # A model is only valid for the exact terms it was trained on; changing any label-defining
+  # value below without retraining makes the bot refuse the model (NO TRADING).
+  product:
+    product: multiplier        # multiplier | accumulator | turbo | vanilla | rise_fall
+    horizon_ticks: 20          # N ticks: expiry (turbo/vanilla/rise_fall) or hold cap (multiplier/accumulator)
+    tick_seconds: 2.0          # seconds per tick of the symbol (R_100 = 2, 1HZ100V = 1)
+    hold_grace_s: 2.0          # extra seconds beyond horizon*tick_seconds before a hold-cap sell
+    max_fee_pct: 0.05          # refuse if (ask - stake)/stake exceeds this (not used for rise_fall)
+    tolerance: 0.10            # allowed deviation of the LIVE proposal vs the trained terms
+    assumed_fee_pct: 0.0       # research only: fee as a fraction of stake
+    duration_unit: t           # proposal duration unit for expiring products
+    # multiplier: server-side take-profit / stop-loss, as a fraction of the stake (stop <= 1)
+    multiplier: 20
+    take_profit_pct: 0.5
+    stop_loss_pct: 0.5
+    # accumulator: growth per tick; barrier_pct = per-tick barrier as a fraction of spot
+    growth_rate: 0.01
+    barrier_pct: 0.0006
+    # turbo: knock-out distance in PRICE units; bot sells at market once profit >= take_profit_pct*cost
+    barrier_offset: 0.5
+    # vanilla: held to expiry; strike offset (price units) and the terminal move that pays target_pct
+    strike_offset: 0.0
+    target_pct: 0.5
+    needed_move: 1.0
+    # rise_fall: research assumption only (the live bot uses the proposal payout)
+    payout_ratio: 1.95
   min_stake: "0.35"
   stake_precision: 2
   max_signal_age_s: 2.0

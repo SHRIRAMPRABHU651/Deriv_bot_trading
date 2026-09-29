@@ -18,6 +18,7 @@ from app.models.schemas import (
     Proposal,
     Signal,
 )
+from app.products import Product, ProductSpec
 from app.risk.manager import ModelInfo, RiskManager
 from app.risk.state import AccountState
 from app.storage.database import Database
@@ -46,6 +47,7 @@ class Harness:
         direction: Direction = Direction.CALL,
         model_version: str | None = "m1",
         sid: str | None = None,
+        product: str | None = None,
     ) -> Signal:
         self.seq += 1
         now = self.clock.time()
@@ -62,6 +64,8 @@ class Harness:
             horizon_ticks=5,
             tick_received_at=now,
             created_at=now,
+            product=product or self.config.trading.product.product.value,
+            entry_price=100.0,
         )
 
     def new_risk(self) -> RiskManager:
@@ -123,8 +127,10 @@ def make_harness(
     risk_cfg: dict[str, Any] | None = None,
     model_status: ModelStatus = ModelStatus.DEMO_VALIDATING,
     start: datetime = START,
+    spec: ProductSpec | None = None,
 ) -> Harness:
     config = AppConfig()
+    config.trading.product = spec or ProductSpec(product=Product.RISE_FALL, horizon_ticks=5)
     prof_updates: dict[str, Any] = {
         "cooldown_seconds": 0.0,
         "max_open_trades": 10,

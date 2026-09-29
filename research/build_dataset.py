@@ -9,18 +9,21 @@ import argparse
 
 import numpy as np
 
+from app.config import load_config
 from app.ml.dataset import build_dataset, load_ticks_csv
 from app.ml.features import FEATURE_NAMES, FEATURE_VERSION
+from research._spec import add_spec_args, spec_from_args
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--ticks", required=True)
-    p.add_argument("--horizon", type=int, default=10, help="N ticks ahead == contract duration")
     p.add_argument("--out", required=True)
+    add_spec_args(p, load_config())
     args = p.parse_args(argv)
+    spec = spec_from_args(args, load_config())
     epochs, prices = load_ticks_csv(args.ticks)
-    ds = build_dataset(epochs, prices, args.horizon)
+    ds = build_dataset(epochs, prices, spec.horizon_ticks, spec)
     np.savez_compressed(
         args.out,
         x=ds.x,
@@ -33,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         feature_version=FEATURE_VERSION,
     )
     print(
-        f"{len(ds)} samples, base rate up={ds.up.mean():.4f} tie={ds.tie_rate:.4f} "
+        f"product={spec.product.value} {len(ds)} samples, win-rate bull={ds.up.mean():.4f} "
+        f"bear={ds.down.mean():.4f} tie={ds.tie_rate:.4f} "
         f"feature_version={FEATURE_VERSION} -> {args.out}"
     )
     return 0

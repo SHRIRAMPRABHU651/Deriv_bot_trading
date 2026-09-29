@@ -24,8 +24,14 @@ class EmaStrategy:
     name = "ema"
 
     def __init__(
-        self, fast: int = 5, slow: int = 20, horizon: int = 10, version: str = "1"
+        self,
+        fast: int = 5,
+        slow: int = 20,
+        horizon: int = 10,
+        version: str = "1",
+        product: str = "rise_fall",
     ) -> None:
+        self._product = product
         if fast >= slow:
             raise ValueError("fast EMA span must be smaller than slow")
         self.version = version
@@ -67,4 +73,6 @@ class EmaStrategy:
             horizon_ticks=self._horizon,
             tick_received_at=tick.received_at,
             created_at=time.time(),
+            product=self._product,
+            entry_price=tick.quote,
         )

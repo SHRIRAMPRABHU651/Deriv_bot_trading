@@ -13,6 +13,7 @@ from app.deriv.protocol import ConnectionLost, DerivError, dec
 from app.execution.idempotency import match_portfolio_contract
 from app.execution.settlement import SettlementTracker
 from app.models.schemas import Mode, OrderState, Severity
+from app.products import product_for_contract_type
 from app.risk.manager import RiskManager
 from app.storage.database import utc_iso
 from app.storage.repositories import Repositories
@@ -127,6 +128,7 @@ class Reconciler:
             probability=order["probability"],
             break_even=order["break_even"],
             ts=self._clock.now(),
+            product=str(order["product"]),
         )
         self._repos.add_reconciliation(self.mode, "buy_adopted", f"order {oid}", cid)
         self._risk.on_purchase()
@@ -136,10 +138,14 @@ class Reconciler:
         """Adopt a broker position this database has never seen (never double-trade)."""
         buy_price = dec(contract.get("buy_price", "0"))
         oid = f"external-{cid}"
+        ctype = str(contract.get("contract_type", "?"))
+        found = product_for_contract_type(ctype)
+        product = found.value if found is not None else "rise_fall"
         now = utc_iso(self._clock.now())
         self._repos.db.execute(
             "INSERT OR IGNORE INTO orders(order_id,signal_id,mode,symbol,direction,stake,state,"
-            "contract_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "contract_id,created_at,updated_at,product,contract_type) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 oid,
                 f"external:{cid}",
@@ -151,6 +157,8 @@ class Reconciler:
                 cid,
                 now,
                 now,
+                product,
+                ctype,
             ),
         )
         self._repos.insert_trade(
@@ -165,6 +173,7 @@ class Reconciler:
             probability=None,
             break_even=None,
             ts=self._clock.now(),
+            product=product,
         )
         self._repos.add_reconciliation(self.mode, "unknown_position", "adopted", cid)
         self._repos.add_risk_event(

@@ -11,7 +11,27 @@ Ticks (`epoch, quote`) from `research.download_ticks` (public `ticks_history`) o
 dataset corresponds to tick index `i + 63` (a 64-tick window). Memory at runtime is bounded: one 64-price deque per
 symbol.
 
-## Label and expiry mapping
+## Trade types
+The pipeline is product-aware (`app/products.py`). A model is trained for **one `ProductSpec`** (product, horizon and
+label-defining terms) which is stored in the artifact; the bot refuses a model whose terms differ from `config.yaml`.
+`up`/`down` in the dataset mean *"the bullish/bearish trade reaches its profit target"* and are simulated on the tick
+path with first-passage rules (ambiguity always resolved **against** the trade; a position that neither hits its
+target nor its stop within the horizon counts as a **loss**, a conservative bound):
+
+| Product | win event (per direction) | W / L used for break-even `L/(W+L)` |
+|---|---|---|
+| Multiplier | take-profit before stop-loss within N ticks (`ret = multiplier × ΔS/S`) | `W = TP − fee`, `L = SL + fee` |
+| Accumulator | every tick within `barrier_pct` for N ticks (non-directional) | `W = (1+g)^N − 1`, `L = 1` |
+| Turbo | +`tp × offset` before −`offset` within N ticks | `W = tp`, `L = 1` |
+| Vanilla | terminal move ≥ `needed_move` at expiry N | `W = target`, `L = 1` |
+| Rise/Fall | strictly beyond the entry tick at expiry | `W = R − 1`, `L = 1` |
+
+Because these events are not complementary (timeouts), multipliers/turbos/vanillas train **separate bullish and bearish
+heads**; accumulators use one survival model; Rise/Fall keeps `P(PUT) = 1 − P(up) − P(tie)`. The research payoff is an
+assumption; at trade time W and L come from the actual proposal and the live terms must still match the trained ones.
+Vectorised labels are unit-tested against a brute-force simulator for every product.
+
+## Label and expiry mapping (Rise/Fall)
 For an entry at tick `t` and horizon `N` (= contract duration in ticks, `trading.duration_ticks`):
 
 | outcome | condition | winner |

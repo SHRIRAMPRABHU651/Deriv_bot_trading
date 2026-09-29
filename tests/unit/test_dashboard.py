@@ -90,7 +90,7 @@ async def test_status_is_readable_and_leaks_no_secrets(http: httpx.AsyncClient) 
         "halts",
     ):
         assert key in data
-    assert data["mode"] == "demo"
+    assert data["mode"] == "demo" and data["product"]["product"] == "rise_fall"
     assert "DERIVBOT" in (await http.get("/")).text
 
 

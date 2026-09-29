@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
 from app.clock import Clock
 from app.config import AppConfig, RiskProfile
@@ -26,7 +27,8 @@ from app.models.schemas import (
     Severity,
     Signal,
 )
-from app.risk.limits import compute_stake, edge_gate
+from app.products import contract_type, edge_gate, payoff_terms
+from app.risk.limits import compute_stake
 from app.risk.permit import BuyPermit, _mint
 from app.risk.state import AccountState, RiskStateStore
 from app.storage.repositories import Repositories
@@ -45,6 +47,13 @@ class ModelInfo:
 
 
 AlertFn = Callable[[str, str], None]
+
+
+def _target_hit(row: Any) -> bool:
+    """The event the model predicts (falls back to profit > 0 for legacy/adopted rows)."""
+    if row["target_hit"] is not None:
+        return bool(row["target_hit"])
+    return Decimal(str(row["profit"])) > 0
 
 
 class RiskManager:
@@ -369,28 +378,45 @@ class RiskManager:
         if not self._running():
             return deny("bot_stopped", "bot stopped before purchase")
         stake = Decimal(str(row["stake"]))
+        spec = self._cfg.trading.product
+        if signal.product != spec.product.value:
+            return deny(
+                "product_mismatch",
+                f"signal product {signal.product} != configured {spec.product.value}",
+            )
         slip = self._cfg.trading.max_price_slippage_percent
-        max_price = stake * (Decimal(1) + slip)
-        if proposal.ask_price > max_price:
+        # Never chase a quote: the price may exceed the stake only by the product's fee allowance.
+        ceiling = stake * (Decimal(1) + slip + Decimal(str(spec.fee_allowance)))
+        if proposal.ask_price > ceiling:
             return deny(
                 "stale_quote",
-                f"ask {proposal.ask_price} above max acceptable {max_price}",
-                {"ask": str(proposal.ask_price), "max": str(max_price)},
+                f"ask {proposal.ask_price} above max acceptable {ceiling}",
+                {"ask": str(proposal.ask_price), "max": str(ceiling)},
             )
-        if proposal.ask_price <= 0 or proposal.payout <= proposal.ask_price:
-            return deny("bad_payout", "payout must exceed price paid")
+        max_price = min(proposal.ask_price * (Decimal(1) + slip), ceiling)
         if proposal.min_stake is not None and stake < proposal.min_stake:
             return deny("proposal_min_stake", f"stake below broker minimum {proposal.min_stake}")
         if proposal.max_stake is not None and stake > proposal.max_stake:
             return deny("proposal_max_stake", f"stake above broker maximum {proposal.max_stake}")
 
-        ratio = proposal.payout_ratio
-        ok, be, edge = edge_gate(signal.probability, ratio, self._cfg.ml.edge_margin)
+        # Win/loss amounts come from the ACTUAL proposal; the live contract must still match the
+        # terms the model was trained for (fails closed).
+        spot = proposal.spot if proposal.spot is not None else signal.entry_price
+        terms = payoff_terms(spec, signal.direction, proposal, stake, spot)
+        if not terms.ok:
+            return deny("spec_mismatch", terms.reason, {"product": spec.product.value})
+        ok, be, edge = edge_gate(signal.probability, terms, self._cfg.ml.edge_margin)
         if not ok:
             return deny(
                 "edge_gate",
                 f"p={signal.probability} < break-even {be:.4f} + margin {self._cfg.ml.edge_margin}",
-                {"break_even": be, "probability": signal.probability, "edge": edge},
+                {
+                    "break_even": be,
+                    "probability": signal.probability,
+                    "edge": edge,
+                    "win": terms.win,
+                    "loss": terms.loss,
+                },
             )
         self._repos.update_order(
             order_id,
@@ -400,6 +426,9 @@ class RiskManager:
             payout=proposal.payout,
             max_price=max_price,
             break_even=be,
+            contract_type=contract_type(spec, signal.direction),
+            win_amount=terms.win,
+            loss_amount=terms.loss,
         )
         return _mint(order_id, proposal.proposal_id, max_price, mode), RiskDecision(
             True, stake=stake, order_id=order_id, details={"break_even": be}
@@ -433,7 +462,7 @@ class RiskManager:
         rows = self._repos.settled_trades(self.mode, limit=window)
         if len(rows) < window:
             return False
-        wins = sum(1 for r in rows if Decimal(str(r["profit"])) > 0)
+        wins = sum(1 for r in rows if _target_hit(r))
         bes = [float(r["break_even"]) for r in rows if r["break_even"] is not None]
         if not bes:
             return False

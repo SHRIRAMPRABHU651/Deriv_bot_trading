@@ -50,7 +50,7 @@ balance at the start of the day/week**; exposure/stake limits use the **current*
 | 11 | `max_exposure` | Total open exposure | `open exposure + stake ≤ bal·max_total_%` | derived | `test_total_exposure_boundary` |
 | 12 | `group_exposure` | Correlated symbols | same, summed over `correlation_groups` | derived | `test_correlated_symbol_group_exposure` |
 | 13 | `cooldown` | Spacing | `now − last_purchase < cooldown` → reject | `last_trade_ts` persisted | `test_cooldown_boundary` |
-| 14 | `edge_gate` | Only trade a validated edge | `p ≥ 1/R + edge_margin` with **R from the actual proposal** | – | `test_edge_gate_*` |
+| 14 | `edge_gate` / `spec_mismatch` | Only trade a validated edge | `p ≥ L/(W+L) + edge_margin` with **W (net win) and L (net loss) from the actual proposal** for the configured product (Rise/Fall: `1/R`). The live contract must also match the trained terms (barrier distance, needed move, fees) or the trade is refused | – | `test_edge_gate_*`, `test_risk_products.py`, `test_products.py` |
 | 15 | `model_unavailable / model_status / model_version / no_probability / model_halt` | Only validated models trade | DEMO: `DEMO_VALIDATING` or `PROMOTABLE`; LIVE: `PROMOTABLE` only | model metadata; rolling-monitor halt persisted per model version | `test_model_*`, `test_live_requires_promotable…`, `test_rolling_monitor_*` |
 | 16 | `stale_feed` | No trading on stale data | any watched symbol silent > `feed_stale_after_s` → reject + CRITICAL event + optional Telegram | recovers automatically when ticks resume | `test_stale_feed…` |
 | 17 | `high_latency` | Slow execution | p95 of the last 50 order-confirmation latencies > `max_latency_ms` (optional, `latency_halt_enabled`) | in-memory window, samples in DB | `test_high_latency…` |
@@ -58,10 +58,19 @@ balance at the start of the day/week**; exposure/stake limits use the **current*
 | 19 | `bot_stopped` | Not running | reject if the controller is not running | – | `test_bot_stopped…` |
 | 20 | `duplicate_signal` | Idempotency | `signal_id = sha256(symbol, tick epoch+id, strategy version, direction, model version)`; **UNIQUE** in `signals` | persisted (survives restart) | `test_duplicate_signal…` |
 | 21 | `account_unverified` | Mode/account integrity | API-verified account type must match the mode (`demo`/`real`) | set at start | `test_bot_stopped_and_account_unverified` |
-| 22 | `stale_quote` | Never chase a quote | buy `price` = proposal ask (× `1+max_price_slippage_percent`, default 0); the broker rejects if the price moved | – | `test_stale_quote_protection` |
+| 22 | `stale_quote` | Never chase a quote | buy `price` = proposal ask (× `1+max_price_slippage_percent`, default 0); the ask may exceed the stake only by the product's fee allowance (`max_fee_pct`, 5 % for multipliers/turbos/vanillas/accumulators, 0 for Rise/Fall); the broker rejects if the price moved | – | `test_stale_quote_protection`, `test_multiplier_commission_above_allowance_is_refused` |
+| 23 | `product_mismatch` | Signal/config consistency | a signal for another trade type than configured is refused | – | `test_a_signal_for_another_product_is_refused` |
+
+## Maximum loss per product
+Every product can lose **at most the stake** (multipliers: the stop-loss ≤ stake plus the fee; accumulators/turbos:
+knock-out = stake; vanillas: the premium), so exposure accounting counts the stake. Fees above the allowance are refused.
+Bot-managed exits (turbo take-profit, hold-cap sells) are recorded in `reconciliation_events`
+(`exit_take_profit`, `exit_hold_cap`); if a sell fails a `sell_failed` risk event is written and the settlement
+watchdog reconciles.
 
 ## Model monitoring
-After every settlement the last `monitor_window` (100) trades are tested: if the win rate is **significantly below**
+After every settlement the last `monitor_window` (100) trades are tested. A "win" is the **event the model predicts**
+(`target_hit`: realised profit ≥ 90 % of the target win, not merely profit > 0): if the win rate is **significantly below**
 the average break-even (one-sided exact binomial test, `monitor_alpha` 5 %) the current model version is halted
 (`model_halt`, CRITICAL). The threshold is **never lowered automatically**; loading a *different* model version
 (manual review/promotion) lifts the halt.

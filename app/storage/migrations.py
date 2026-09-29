@@ -132,6 +132,15 @@ MIGRATIONS: list[str] = [
         detail TEXT NOT NULL
     );
     """,
+    # ---- v2: multi-product support -------------------------------------------------------
+    """
+    ALTER TABLE orders ADD COLUMN product TEXT NOT NULL DEFAULT 'rise_fall';
+    ALTER TABLE orders ADD COLUMN contract_type TEXT;
+    ALTER TABLE trades ADD COLUMN product TEXT NOT NULL DEFAULT 'rise_fall';
+    ALTER TABLE orders ADD COLUMN win_amount REAL;
+    ALTER TABLE orders ADD COLUMN loss_amount REAL;
+    ALTER TABLE trades ADD COLUMN target_hit INTEGER;
+    """,
 ]
 
 

@@ -6,6 +6,13 @@ All commands run from the repository root inside the virtualenv. Nothing here pl
 # 1. Historical ticks (public call, no token). Adjust --ws-url if Deriv changes the public endpoint.
 python -m research.download_ticks --symbol R_100 --count 200000 --out data/R_100.csv
 
+# Trade type: add --product multiplier|accumulator|turbo|vanilla|rise_fall and its terms, e.g.
+#   --product turbo --horizon 10 --barrier-offset 0.5 --take-profit 0.5
+#   --product multiplier --horizon 20 --multiplier 20 --take-profit 0.5 --stop-loss 0.5
+#   --product accumulator --horizon 10 --growth-rate 0.01 --barrier-pct 0.0006
+#   --product vanilla --horizon 10 --needed-move 1.0 --target-pct 0.5
+# (defaults come from config.yaml trading.product)
+
 # 2. (optional) inspect the supervised dataset
 python -m research.build_dataset --ticks data/R_100.csv --horizon 10 --out data/R_100_h10.npz
 
