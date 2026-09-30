@@ -17,6 +17,19 @@
 > *implemented against the documented flow and verified against a mock*, **not** verified against the real
 > service. The first real DEMO run (see `OPERATIONS.md`) is the actual verification.
 
+## 0. OAuth 2.0 page (official text supplied by the operator) — CONFIRMED
+Source: developers.deriv.com/docs/intro/oauth (pasted into the session; the site itself is blocked from the sandbox).
+- Authorization Code + **PKCE (S256)**. Authorization: `https://auth.deriv.com/oauth2/auth`; token: `POST
+  https://auth.deriv.com/oauth2/token` (form-encoded: `grant_type, client_id, code, code_verifier, redirect_uri`).
+  Scopes: `trade`, `account_manage`, `application_read`, `payment`. `client_id` = "Your app ID" (example `app12345`).
+- Token response: `{"access_token": "ory_at_...", "expires_in": 3600, "token_type": "Bearer"}` — **1 hour, no refresh token
+  documented**. That is why this bot uses a **Personal Access Token** (user-created, up to 90 days) and does not implement OAuth.
+- **API base URL `https://api.derivws.com` is confirmed**, and `GET /trading/v1/options/accounts` with only
+  `Authorization: Bearer <access token>` is the documented example. (For PAT apps the `Deriv-App-ID` header is additionally
+  required, per the Authentication page.)
+- Still unknown: whether the identifier shown next to a PAT/app registration is the value `Deriv-App-ID` expects
+  (an OAuth `client_id` may differ from the PAT app id). `scripts/check_auth.py` shows Deriv's exact error.
+
 ## 1. Confirmed current behaviour
 
 ### Authentication (PAT + App ID) **[current-docs excerpt]**
@@ -136,7 +149,7 @@ the edge gate come from the proposal (`ask_price`, `commission`, limit orders, c
   confirmation UI, and a `live_switch_denied` CRITICAL risk event is written for every refusal.
 
 ## 4. Not confirmed (could not be verified from the build environment)
-1. **REST base URL** `https://api.derivws.com` — taken from an excerpt; configurable (`deriv.rest_base_url`).
+1. ~~REST base URL~~ — now confirmed (see §0); still configurable (`deriv.rest_base_url`).
 2. **Exact JSON shape of the accounts-list response** (`data` as list vs `{accounts: [...]}`) — the parser accepts
    both; `account_type` values assumed `demo`/`real` (from the create-account excerpt).
 3. **Shape of the OTP response beyond `data.url`.**
