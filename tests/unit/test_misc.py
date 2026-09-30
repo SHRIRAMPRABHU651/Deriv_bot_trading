@@ -284,3 +284,22 @@ def test_shipped_example_configs_are_valid_and_identical() -> None:
     assert cfg.trading.product.product.value == "multiplier"
     assert cfg.trading.product.stop_loss_pct <= 1
     assert (root / "config.example.yaml").read_text() == (root / "config.yaml.example").read_text()
+
+
+def test_accumulator_barrier_is_read_from_the_longcode_when_no_field_is_given() -> None:
+    longcode = (
+        "After the entry spot tick, your stake will grow continuously by 1% for every tick "
+        "that the spot price remains within the ± 0.06126% from the previous spot price."
+    )
+    prop = protocol.parse_proposal(
+        {
+            "proposal": {
+                "id": "p",
+                "ask_price": 1,
+                "longcode": longcode,
+                "validation_params": {"max_ticks": 250},
+            }
+        }
+    )
+    assert prop.barrier_pct_per_tick == pytest.approx(0.0006126)
+    assert prop.max_ticks == 250

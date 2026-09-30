@@ -7,6 +7,7 @@ list of items that could not be confirmed against the current documentation.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -167,6 +168,9 @@ def parse_history(msg: dict[str, Any]) -> list[tuple[int, float]]:
     return [(int(t), float(p)) for t, p in zip(times, prices, strict=True)]
 
 
+_BARRIER_IN_LONGCODE = re.compile(r"(?:±|\+/-)\s*([0-9]+(?:\.[0-9]+)?)\s*%")
+
+
 def parse_proposal(msg: dict[str, Any]) -> Proposal:
     body = msg.get("proposal")
     if not isinstance(body, dict):
@@ -176,6 +180,9 @@ def parse_proposal(msg: dict[str, Any]) -> Proposal:
         stake_vp = vp.get("stake") or {}
         details = body.get("contract_details") or {}
         pct = _num(details.get("tick_size_barrier_percentage"))
+        if pct is None:  # the current API states it only in the longcode: "within the ± 0.06126%"
+            m = _BARRIER_IN_LONGCODE.search(str(body.get("longcode", "")))
+            pct = float(m.group(1)) if m else None
         max_ticks = vp.get("max_ticks", details.get("maximum_ticks"))
         return Proposal(
             proposal_id=str(body["id"]),
