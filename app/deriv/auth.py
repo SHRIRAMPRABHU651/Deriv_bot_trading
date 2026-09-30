@@ -51,7 +51,7 @@ class DerivAuth:
             f"{self._base}/trading/v1/options/accounts", headers=self._headers(mode)
         )
         if resp.status_code != 200:
-            raise AuthError(f"account list failed: HTTP {resp.status_code}")
+            raise AuthError(describe_failure("account list", resp))
         return parse_accounts(resp.json())
 
     async def verify_account(self, mode: Mode) -> AccountInfo:
@@ -74,12 +74,35 @@ class DerivAuth:
             headers=self._headers(mode),
         )
         if resp.status_code not in (200, 201):
-            raise AuthError(f"OTP request failed: HTTP {resp.status_code}")
+            raise AuthError(describe_failure("OTP request", resp))
         data = resp.json().get("data") or {}
         url = data.get("url")
         if not isinstance(url, str) or not url.startswith(("ws://", "wss://")):
             raise AuthError("OTP response did not contain a WebSocket url")
         return url
+
+
+def describe_failure(what: str, resp: httpx.Response) -> str:
+    """HTTP status + Deriv's message (truncated) + likely causes. Never echoes secrets."""
+    detail = ""
+    try:
+        body = resp.json()
+        if isinstance(body, dict):
+            err = body.get("error", body)
+            if isinstance(err, dict):
+                detail = str(err.get("message") or err.get("code") or "")
+            else:
+                detail = str(err)
+    except ValueError:
+        detail = resp.text
+    msg = f"{what} failed: HTTP {resp.status_code}" + (f" - {detail[:160]}" if detail else "")
+    if resp.status_code in (401, 403):
+        msg += (
+            " | check: the token is copied in full (starts with pat_) with no spaces or quotes, "
+            "has not expired or been revoked, was created for this account, and "
+            "DERIV_APP_ID is the app id belonging to it"
+        )
+    return msg
 
 
 def parse_accounts(payload: Any) -> list[AccountInfo]:

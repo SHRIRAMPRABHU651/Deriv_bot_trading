@@ -71,3 +71,28 @@ async def test_wrong_account_type_aborts_start(tmp_path: Path, mock: MockDeriv) 
         await ctl.start()
     assert not ctl.running
     await ctl.shutdown()
+
+
+async def test_rejected_token_shows_deriv_message_without_leaking_the_token(tmp_path: Path) -> None:
+    body = {"error": {"code": "InvalidToken", "message": "Invalid or expired token"}}
+    ctl = controller_with_transport(
+        tmp_path,
+        httpx.MockTransport(lambda req: httpx.Response(401, json=body)),
+        token="pat_" + "s3cr3t" * 5,
+    )
+    with pytest.raises(StartError) as exc:
+        await ctl.start()
+    text = str(exc.value)
+    assert "Invalid or expired token" in text and "401" in text and "app id" in text
+    assert "s3cr3t" not in text
+    await ctl.shutdown()
+
+
+def test_credential_lint_catches_common_copy_paste_mistakes() -> None:
+    from scripts.check_auth import lint_value
+
+    assert lint_value("T", "pat_abc") == []
+    assert lint_value("T", "") == ["T is empty"]
+    assert any("quotes" in p for p in lint_value("T", '"pat_abc"'))
+    assert any("whitespace" in p for p in lint_value("T", "pat_abc "))
+    assert any("space" in p for p in lint_value("T", "pat abc"))

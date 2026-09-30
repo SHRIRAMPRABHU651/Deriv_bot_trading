@@ -90,7 +90,7 @@ order_id, contract_id, latency_ms`. Tokens, OTPs and bearer headers are redacted
 | symptom | cause / fix |
 |---|---|
 | `cannot start: Missing credentials` | fill `.env` (see above) |
-| `HTTP 401` on start | wrong/expired PAT or missing `Deriv-App-ID` |
+| `HTTP 401` / "Invalid or expired token" | run `python scripts/check_auth.py` (read-only, prints no secrets): it flags stray quotes/spaces, a token not starting with `pat_`, and shows Deriv's own message. Causes: expired/revoked/truncated token, or the wrong `DERIV_APP_ID` |
 | `account … is 'real', expected 'demo'` | the demo account id points at a real account |
 | `startup reconciliation failed` | broker unreachable; fix connectivity, press Start again |
 | `NO MODEL / NO TRADING` | train a model or wait — this is the safe default |
