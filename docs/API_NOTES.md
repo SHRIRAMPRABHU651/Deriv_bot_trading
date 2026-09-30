@@ -185,5 +185,5 @@ the edge gate come from the proposal (`ask_price`, `commission`, limit orders, c
 - Real API answer to a legacy-style proposal: `InputValidationFailed: Properties not allowed: symbol`. The current
   `proposal` request does not accept `symbol`. `DerivClient.proposal` now reads the "Properties not allowed" message,
   maps `symbol` -> `underlying_symbol` (assumed replacement, **not yet confirmed**), retries once and remembers it.
-- `python scripts/check_proposal.py` requests proposals (never buys) and prints the exact request + Deriv's reply, so
+- `python -m scripts.check_proposal` requests proposals (never buys) and prints the exact request + Deriv's reply, so
   any further field mismatch (multiplier `limit_order`, `duration`, ...) can be corrected from one paste.

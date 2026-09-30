@@ -1,6 +1,6 @@
 """Check your Deriv credentials WITHOUT trading (read-only REST call). Prints no secrets.
 
-python scripts/check_auth.py            # DEMO credentials from .env
+python -m scripts.check_auth            # DEMO credentials from .env
 """
 
 from __future__ import annotations

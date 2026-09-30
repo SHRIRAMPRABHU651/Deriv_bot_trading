@@ -1,6 +1,6 @@
 """Run the bot in DEMO mode with autostart, refusing to run without DEMO credentials.
 
-python scripts/run_demo.py
+python -m scripts.run_demo
 """
 
 from __future__ import annotations

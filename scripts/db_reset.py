@@ -1,6 +1,6 @@
 """Delete the local SQLite database (asks for confirmation). Does NOT touch the broker.
 
-python scripts/db_reset.py
+python -m scripts.db_reset
 """
 
 from __future__ import annotations

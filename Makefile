@@ -23,7 +23,7 @@ typecheck:
 	$(BIN)/mypy app tests research scripts
 
 security:
-	$(BIN)/python scripts/check.py
+	$(BIN)/python -m scripts.check
 
 # lint + typecheck + all tests (+ secret scan). Must exit 0.
 check: lint typecheck security test
@@ -33,7 +33,7 @@ run:
 
 # DEMO only, autostart. Refuses to run without DEMO credentials in .env.
 demo:
-	$(BIN)/python scripts/run_demo.py
+	$(BIN)/python -m scripts.run_demo
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache

@@ -1,6 +1,6 @@
 """Security/hygiene gate: fails (exit 1) if secrets, live credentials or AI/LLM code are present.
 
-python scripts/check.py
+python -m scripts.check
 """
 
 from __future__ import annotations

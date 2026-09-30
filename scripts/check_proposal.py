@@ -1,6 +1,6 @@
 """Ask Deriv for price proposals on the DEMO account. NEVER buys anything. Prints no secrets.
 
-python scripts/check_proposal.py [SYMBOL]
+python -m scripts.check_proposal [SYMBOL]
 
 Shows the exact request the bot sends for the configured product and Deriv's answer (or its
 error message), so mismatches between the bot and the real API can be corrected quickly.

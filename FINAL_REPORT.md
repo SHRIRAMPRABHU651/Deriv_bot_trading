@@ -62,7 +62,7 @@ corrected to the documented types.
 | `python -m compileall app tests research scripts` | OK |
 | `ruff check .` | **All checks passed** (rules E,F,W,I,B,UP,SIM,C4,ASYNC; none disabled) |
 | `mypy app tests research scripts` | **Success: no issues found in 89 source files** (`strict = true`; **no `type: ignore`**; only sklearn/joblib/scipy have `ignore_missing_imports` because they ship no complete typing) |
-| `python scripts/check.py` | security check passed (no secrets, no live credentials, no AI/LLM imports) |
+| `python -m scripts.check` | security check passed (no secrets, no live credentials, no AI/LLM imports) |
 | `pytest -q` | **228 passed** (integration suite re-run 3× consecutively, stable) |
 | `make check` | **exit 0** |
 
