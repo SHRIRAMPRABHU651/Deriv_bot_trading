@@ -34,3 +34,10 @@ python -m research.evaluate --model-dir model --demo-db data/derivbot.db --promo
 A model whose verdict is **NO EVIDENCE OF EDGE** is stored with status `REJECTED` and the bot
 refuses to trade it. That is the expected outcome for most price series (synthetic indices are
 designed to be random walks). Do not lower thresholds to change that.
+
+## Evidence report (start here)
+```bash
+python -m research.analyze --ticks data/R_100.csv
+```
+Randomness tests + fee-adjusted break-even + walk-forward test per trade setting, corrected for the number of settings tried.
+The bot should only be allowed to trade a setting the report marks `CANDIDATE`, and even then only after >= 1000 demo trades.
