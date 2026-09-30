@@ -41,6 +41,7 @@ from app.storage.repositories import Repositories
 from app.strategy.base import Strategy
 from app.strategy.ema import EmaStrategy
 from app.strategy.ml_strategy import MLStrategy
+from app.strategy.probe import ProbeStrategy
 
 log = logging.getLogger("derivbot.controller")
 
@@ -107,6 +108,7 @@ class Controller:
             model_getter=self.model_info,
             running_getter=lambda: self.running,
             alert=self.alerter.notify,
+            probe_getter=lambda: self.probe_enabled,
         )
         self.strategy: Strategy = self._build_strategy()
         self.client: DerivClient | None = None
@@ -163,8 +165,20 @@ class Controller:
         )
         return self.predictor is not None
 
+    @property
+    def probe_enabled(self) -> bool:
+        """DEMO-only pipeline probe (config `probe.enabled` or env DEMO_PROBE=true)."""
+        return self.config.probe.enabled or self.settings.demo_probe
+
     def _build_strategy(self) -> Strategy:
         s = self.config.strategy
+        if self.probe_enabled:
+            return ProbeStrategy(
+                self.config.probe.interval_ticks,
+                self.config.trading.product.horizon_ticks,
+                self.config.trading.product.product.value,
+                s.version,
+            )
         if s.name == "ema":
             return EmaStrategy(
                 s.ema_fast,
@@ -195,6 +209,8 @@ class Controller:
             if self.risk.kill_active():
                 raise StartError("kill switch is active; clear it deliberately before starting")
             mode = self.mode
+            if mode is Mode.LIVE and self.probe_enabled:
+                raise StartError("the DEMO probe is enabled; it can never run in LIVE mode")
             client = self._client_factory(mode)
             try:
                 acct = await client.verify_account()  # REST first: clear errors for bad creds
@@ -254,7 +270,7 @@ class Controller:
             self.feed.watch(self.config.trading.symbols, self.clock.time())
             for symbol in self.config.trading.symbols:
                 await client.subscribe_ticks(symbol, self.on_tick)
-            self.trading_enabled = self.predictor is not None
+            self.trading_enabled = self.predictor is not None or self.probe_enabled
             self.running = True
             self.started_at = self.clock.time()
             self._tasks = [
@@ -503,6 +519,8 @@ class Controller:
             raise self._deny_live("DERIV_LIVE_TOKEN is not set")
         if not s.deriv_live_account_id:
             raise self._deny_live("DERIV_LIVE_ACCOUNT_ID is not set")
+        if self.probe_enabled:
+            raise self._deny_live("the DEMO probe is enabled; disable it before going LIVE")
         if self.running:
             raise self._deny_live("bot must be stopped before switching mode")
         if self.open_trade_count() > 0:
@@ -630,7 +648,9 @@ class Controller:
             "mode": mode.value,
             "product": self.config.trading.product.model_dump(mode="json"),
             "running": self.running,
-            "trading_enabled": self.trading_enabled and self.predictor is not None,
+            "trading_enabled": self.trading_enabled
+            and (self.predictor is not None or self.probe_enabled),
+            "probe": self.probe_enabled,
             "account": {
                 "id": self.account.account_id,
                 "type": self.account.verified_type,

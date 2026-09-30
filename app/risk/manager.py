@@ -32,6 +32,7 @@ from app.risk.limits import compute_stake
 from app.risk.permit import BuyPermit, _mint
 from app.risk.state import AccountState, RiskStateStore
 from app.storage.repositories import Repositories
+from app.strategy.probe import PROBE_NAME
 
 log = logging.getLogger("derivbot.risk")
 
@@ -69,7 +70,9 @@ class RiskManager:
         model_getter: Callable[[], ModelInfo | None],
         running_getter: Callable[[], bool],
         alert: AlertFn | None = None,
+        probe_getter: Callable[[], bool] | None = None,
     ) -> None:
+        self._probe_enabled = probe_getter or (lambda: False)
         self._repos = repos
         self._cfg = config
         self._clock = clock
@@ -82,6 +85,13 @@ class RiskManager:
         self.state = RiskStateStore(repos, clock, config.tz)
 
     # ---- helpers ----------------------------------------------------------------------------
+    def _is_probe(self, signal: Signal) -> bool:
+        return signal.strategy == PROBE_NAME
+
+    def _probe_allowed(self) -> bool:
+        """The model/edge gates may be skipped ONLY for the probe, ONLY in DEMO, ONLY if enabled."""
+        return self._probe_enabled() and self.mode is Mode.DEMO
+
     @property
     def mode(self) -> Mode:
         return self.account.mode
@@ -229,26 +239,36 @@ class RiskManager:
                 signal, "drawdown_halt", "drawdown halt active (manual reset needed)"
             )
 
-        model = self._model()
-        if model is None:
+        if self._is_probe(signal):
+            if not self._probe_allowed():
+                return self._reject(signal, "probe_not_allowed", "probe signals are DEMO-only")
+            model = None
+        else:
+            model = self._model()
+        if model is None and not self._is_probe(signal):
             return self._reject(signal, "model_unavailable", "no validated model loaded")
         allowed = (
             {ModelStatus.PROMOTABLE}
             if mode is Mode.LIVE
             else {ModelStatus.DEMO_VALIDATING, ModelStatus.PROMOTABLE}
         )
-        if model.status not in allowed:
-            return self._reject(
-                signal,
-                "model_status",
-                f"model status {model.status.value} may not trade in {mode.value}",
-            )
-        if signal.model_version != model.version:
-            return self._reject(signal, "model_version", "signal model version != loaded model")
-        if self.model_halted(model):
-            return self._reject(signal, "model_halt", "model halted by rolling performance monitor")
-        if signal.probability is None:
-            return self._reject(signal, "no_probability", "signal has no calibrated probability")
+        if model is not None:
+            if model.status not in allowed:
+                return self._reject(
+                    signal,
+                    "model_status",
+                    f"model status {model.status.value} may not trade in {mode.value}",
+                )
+            if signal.model_version != model.version:
+                return self._reject(signal, "model_version", "signal model version != loaded model")
+            if self.model_halted(model):
+                return self._reject(
+                    signal, "model_halt", "model halted by rolling performance monitor"
+                )
+            if signal.probability is None:
+                return self._reject(
+                    signal, "no_probability", "signal has no calibrated probability"
+                )
 
         if self._feed.is_stale(signal.symbol, now, self._cfg.risk.feed_stale_after_s):
             return self._reject(signal, "stale_feed", "market feed is stale")
@@ -377,6 +397,9 @@ class RiskManager:
             return deny("kill_switch", "kill switch is active")
         if not self._running():
             return deny("bot_stopped", "bot stopped before purchase")
+        probe = self._is_probe(signal)
+        if probe and not self._probe_allowed():
+            return deny("probe_not_allowed", "probe signals are DEMO-only")
         stake = Decimal(str(row["stake"]))
         spec = self._cfg.trading.product
         if signal.product != spec.product.value:
@@ -406,7 +429,7 @@ class RiskManager:
         if not terms.ok:
             return deny("spec_mismatch", terms.reason, {"product": spec.product.value})
         ok, be, edge = edge_gate(signal.probability, terms, self._cfg.ml.edge_margin)
-        if not ok:
+        if not ok and not probe:  # the probe deliberately has no edge (DEMO pipeline test only)
             return deny(
                 "edge_gate",
                 f"p={signal.probability} < break-even {be:.4f} + margin {self._cfg.ml.edge_margin}",

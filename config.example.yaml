@@ -112,3 +112,11 @@ retention:
   latency_days: 30
   store_ticks: false
   cleanup_interval_s: 3600
+
+# DEMO-only pipeline test mode: trades small fixed-size positions WITHOUT a model so you can watch
+# proposal -> buy -> settlement work on the demo account. It is NOT a strategy and has no edge
+# (expect a slow loss to fees). Every risk limit still applies; it is refused in LIVE mode.
+# Raise risk.demo.max_consecutive_losses if you want it to keep going after a losing streak.
+probe:
+  enabled: false
+  interval_ticks: 30       # one probe signal per N ticks per symbol (alternates up / down)

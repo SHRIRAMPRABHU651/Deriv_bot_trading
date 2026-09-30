@@ -184,3 +184,13 @@ See the table in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#troubleshooting). Qui
 ## Disclaimer
 Educational software provided as is, without warranty. Trading binary/rise-fall options can lose all your stake. Nothing
 here is financial advice and no profit is promised.
+
+
+## DEMO probe (pipeline test, no model)
+Without a validated model the bot correctly does not trade. To see real buy → settle → P&L on the **demo** account
+anyway, set `DEMO_PROBE=true` in `.env` (or `probe.enabled: true` in `config.yaml`) and restart. The dashboard then shows
+**DEMO PROBE – PIPELINE TEST, NOT A STRATEGY**. It emits one alternating up/down signal every `probe.interval_ticks` ticks;
+all risk rules still apply (stake %, loss limits, exposure, cooldown, kill switch, halts). Only the model/edge gates are
+skipped, only in DEMO, and it refuses to start or switch to LIVE. It has no edge: expect a slow loss to fees. Multipliers
+use native take-profit/stop-loss; other products use their normal exits. If it stops after a losing streak that is the
+consecutive-loss halt (`risk.demo.max_consecutive_losses`, default 3) doing its job.

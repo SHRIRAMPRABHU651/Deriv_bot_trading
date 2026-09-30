@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     dashboard_token: SecretStr = SecretStr("")
     telegram_bot_token: SecretStr = SecretStr("")
     telegram_chat_id: str = ""
+    demo_probe: bool = False  # DEMO-only pipeline probe (see app/strategy/probe.py)
 
     def token_for(self, mode: Mode) -> str:
         token = self.deriv_demo_token if mode is Mode.DEMO else self.deriv_live_token
@@ -161,6 +162,13 @@ class StrategySection(BaseModel):
     ema_slow: int = 20
 
 
+class ProbeSection(BaseModel):
+    """DEMO-only pipeline test mode: trades without a model to exercise buy/settle end to end."""
+
+    enabled: bool = False
+    interval_ticks: int = Field(default=30, ge=1)
+
+
 class MLSection(BaseModel):
     edge_margin: float = 0.03
     alpha: float = 0.05
@@ -185,6 +193,7 @@ class AppConfig(BaseModel):
     strategy: StrategySection = Field(default_factory=StrategySection)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     ml: MLSection = Field(default_factory=MLSection)
+    probe: ProbeSection = Field(default_factory=ProbeSection)
     retention: RetentionSection = Field(default_factory=RetentionSection)
 
     @property
