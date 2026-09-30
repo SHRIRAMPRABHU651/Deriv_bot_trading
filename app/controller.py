@@ -651,6 +651,11 @@ class Controller:
             "trading_enabled": self.trading_enabled
             and (self.predictor is not None or self.probe_enabled),
             "probe": self.probe_enabled,
+            "probe_next_in": {
+                sym: self.strategy.ticks_until_next(sym)
+                for sym in self.config.trading.symbols
+                if isinstance(self.strategy, ProbeStrategy)
+            },
             "account": {
                 "id": self.account.account_id,
                 "type": self.account.verified_type,

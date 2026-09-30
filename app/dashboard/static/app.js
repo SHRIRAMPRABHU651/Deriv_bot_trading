@@ -64,7 +64,11 @@ function render(s) {
   add("RISK: " + s.risk_status, s.risk_status === "OK" ? "ok" : "bad");
   for (const h of s.halts) add(h, "bad");
   if (s.feed.stale) add("STALE FEED", "bad");
-  if (s.probe) add("DEMO PROBE - PIPELINE TEST, NOT A STRATEGY", "warnb");
+  if (s.probe) {
+    add("DEMO PROBE - PIPELINE TEST, NOT A STRATEGY", "warnb");
+    const nxt = Object.entries(s.probe_next_in || {}).map(([k, v]) => k + ": next signal in " + v + " ticks").join(", ");
+    if (nxt) add(nxt, "ok");
+  }
   if (!s.trading_enabled) add(s.model.status === "NO_MODEL" ? "NO MODEL / NO TRADING" : "MODEL " + s.model.status, "warnb");
 
   dl($("account"), [

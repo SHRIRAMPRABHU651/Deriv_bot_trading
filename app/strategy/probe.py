@@ -31,6 +31,9 @@ class ProbeStrategy:
     def reset(self, symbol: str) -> None:
         self._seen.pop(symbol, None)
 
+    def ticks_until_next(self, symbol: str) -> int:
+        return self._interval - self._seen.get(symbol, 0) % self._interval
+
     async def on_tick(self, symbol: str, tick: Tick) -> Signal | None:
         if tick.symbol != symbol:
             return None

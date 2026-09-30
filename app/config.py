@@ -166,7 +166,7 @@ class ProbeSection(BaseModel):
     """DEMO-only pipeline test mode: trades without a model to exercise buy/settle end to end."""
 
     enabled: bool = False
-    interval_ticks: int = Field(default=30, ge=1)
+    interval_ticks: int = Field(default=10, ge=1)
 
 
 class MLSection(BaseModel):

@@ -119,4 +119,4 @@ retention:
 # Raise risk.demo.max_consecutive_losses if you want it to keep going after a losing streak.
 probe:
   enabled: false
-  interval_ticks: 30       # one probe signal per N ticks per symbol (alternates up / down)
+  interval_ticks: 10       # one probe signal per N ticks per symbol (alternates up / down)
