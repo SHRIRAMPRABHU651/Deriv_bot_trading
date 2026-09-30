@@ -52,6 +52,16 @@
       <button id="btn-reload">Reload model</button>
       <button id="btn-live" class="danger">Switch to LIVE…</button>
       <button id="btn-demo">Switch to DEMO</button>
+      <label class="inline">Trade type
+        <select id="product">
+          <option value="multiplier">Multipliers</option>
+          <option value="accumulator">Accumulators</option>
+          <option value="turbo">Turbos</option>
+          <option value="vanilla">Vanillas</option>
+          <option value="rise_fall">Rise / Fall</option>
+        </select>
+      </label>
+      <button id="btn-product">Apply (bot must be stopped)</button>
       <span id="msg"></span>
     </section>
 

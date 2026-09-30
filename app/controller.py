@@ -33,6 +33,7 @@ from app.ml.artifacts import ArtifactError
 from app.ml.features import FEATURE_VERSION
 from app.ml.predict import ModelPredictor
 from app.models.schemas import Mode, ModelStatus, Severity, Signal, Tick
+from app.products import Product, ProductSpec, directions
 from app.risk.limits import compute_stake
 from app.risk.manager import ModelInfo, RiskManager
 from app.risk.state import AccountState
@@ -178,6 +179,7 @@ class Controller:
                 self.config.trading.product.horizon_ticks,
                 self.config.trading.product.product.value,
                 s.version,
+                directions(self.config.trading.product),
             )
         if s.name == "ema":
             return EmaStrategy(
@@ -192,6 +194,32 @@ class Controller:
             margin=self.config.ml.edge_margin,
             horizon=self.config.trading.product.horizon_ticks,
         )
+
+    def set_product(self, name: str) -> str:
+        """Choose the trade type (multiplier / accumulator / ...) while the bot is stopped.
+
+        In-memory only: put `trading.product.product` in config.yaml to make it permanent.
+        A loaded model for other terms is refused by reload_model (probe mode needs no model).
+        """
+        if self.running:
+            raise ControllerError("stop the bot before changing the trade type")
+        if self.open_trade_count() > 0:
+            raise ControllerError("open trades exist")
+        try:
+            product = Product(name)
+        except ValueError as exc:
+            raise ControllerError(f"unknown trade type {name!r}") from exc
+        current = self.config.trading.product
+        if product is not current.product:
+            self.config.trading.product = ProductSpec.model_validate(
+                {**ProductSpec(product=product).model_dump(), "tick_seconds": current.tick_seconds}
+            )
+            self.strategy = self._build_strategy()
+            self.reload_model()
+            self.repos.add_risk_event(
+                self.mode, Severity.INFO, "product_changed", f"trade type set to {product.value}"
+            )
+        return product.value
 
     # ---- mode -------------------------------------------------------------------------------
     @property

@@ -1,6 +1,6 @@
 """Ask Deriv for price proposals on the DEMO account. NEVER buys anything. Prints no secrets.
 
-python -m scripts.check_proposal [SYMBOL]
+python -m scripts.check_proposal [SYMBOL] [PRODUCT]   # e.g. R_100 accumulator
 
 Shows the exact request the bot sends for the configured product and Deriv's answer (or its
 error message), so mismatches between the bot and the real API can be corrected quickly.
@@ -17,12 +17,14 @@ import httpx
 from app.config import Settings, load_config
 from app.deriv import protocol
 from app.deriv.client import DerivClient
-from app.models.schemas import Direction, Mode
-from app.products import proposal_params
+from app.models.schemas import Mode
+from app.products import Product, ProductSpec, directions, proposal_params
 
 
-async def main(symbol: str) -> int:
+async def main(symbol: str, product: str | None = None) -> int:
     settings, cfg = Settings(), load_config()
+    if product:
+        cfg.trading.product = ProductSpec(product=Product(product))
     spec = cfg.trading.product
     async with httpx.AsyncClient(timeout=15.0) as http:
         client = DerivClient(Mode.DEMO, settings, cfg, http)
@@ -37,7 +39,7 @@ async def main(symbol: str) -> int:
         print(f"product={spec.product.value} symbol={symbol} stake={stake}\n")
         code = 0
         try:
-            for direction in (Direction.CALL, Direction.PUT):
+            for direction in directions(spec):
                 sent = protocol.proposal(
                     symbol=symbol,
                     amount=stake,
@@ -62,4 +64,7 @@ async def main(symbol: str) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else "R_100")))
+    args = sys.argv[1:]
+    raise SystemExit(
+        asyncio.run(main(args[0] if args else "R_100", args[1] if len(args) > 1 else None))
+    )

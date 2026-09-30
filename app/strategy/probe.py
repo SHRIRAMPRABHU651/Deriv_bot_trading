@@ -20,13 +20,21 @@ PROBE_NAME = "demo_probe"
 class ProbeStrategy:
     name = PROBE_NAME
 
-    def __init__(self, interval_ticks: int, horizon: int, product: str, version: str = "1") -> None:
+    def __init__(
+        self,
+        interval_ticks: int,
+        horizon: int,
+        product: str,
+        version: str = "1",
+        directions: tuple[Direction, ...] = (Direction.CALL, Direction.PUT),
+    ) -> None:
+        self._directions = directions
         self.version = version
         self._interval = max(1, interval_ticks)
         self._horizon = horizon
         self._product = product
         self._seen: dict[str, int] = {}
-        self._flip: dict[str, bool] = {}
+        self._flip: dict[str, int] = {}
 
     def reset(self, symbol: str) -> None:
         self._seen.pop(symbol, None)
@@ -41,9 +49,9 @@ class ProbeStrategy:
         self._seen[symbol] = n
         if n % self._interval != 0:
             return None
-        up = not self._flip.get(symbol, False)
-        self._flip[symbol] = up
-        direction = Direction.CALL if up else Direction.PUT
+        step = self._flip.get(symbol, 0)
+        self._flip[symbol] = step + 1
+        direction = self._directions[step % len(self._directions)]  # alternates when 2-sided
         return Signal(
             signal_id=make_signal_id(symbol, tick, self.version, direction, None),
             symbol=symbol,

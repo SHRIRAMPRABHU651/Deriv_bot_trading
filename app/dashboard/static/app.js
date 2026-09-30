@@ -59,6 +59,8 @@ function render(s) {
   $("mode").textContent = "MODE: " + s.mode.toUpperCase();
   $("runstate").textContent = (s.running ? "RUNNING" : "STOPPED") + (s.trading_enabled ? "" : " · NO TRADING");
 
+  const sel = $("product");
+  if (sel && document.activeElement !== sel && s.product) sel.value = s.product.product;
   const alerts = $("alerts"); alerts.replaceChildren();
   const add = (t, cls) => { const b = document.createElement("span"); b.className = "badge " + cls; b.textContent = t; alerts.append(b, " "); };
   add("RISK: " + s.risk_status, s.risk_status === "OK" ? "ok" : "bad");
@@ -139,6 +141,7 @@ $("btn-clear-kill").onclick = () => {
   if (phrase === "CLEAR KILL") act(() => post("/kill/clear", { confirm: true, phrase }));
 };
 $("btn-reload").onclick = () => act(() => post("/model/reload", { confirm: true }));
+$("btn-product").onclick = () => act(() => post("/product", { confirm: true, product: $("product").value }));
 $("btn-demo").onclick = () => act(() => post("/mode", { target: "demo" }));
 
 $("btn-live").onclick = async () => {

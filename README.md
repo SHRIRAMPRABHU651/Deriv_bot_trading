@@ -194,3 +194,8 @@ all risk rules still apply (stake %, loss limits, exposure, cooldown, kill switc
 skipped, only in DEMO, and it refuses to start or switch to LIVE. It has no edge: expect a slow loss to fees. Multipliers
 use native take-profit/stop-loss; other products use their normal exits. If it stops after a losing streak that is the
 consecutive-loss halt (`risk.demo.max_consecutive_losses`, default 3) doing its job.
+
+**Choosing the trade type in the dashboard.** With the bot stopped, pick *Multipliers / Accumulators / Turbos / Vanillas /
+Rise-Fall* in the **Trade type** box and press **Apply**. It lasts until restart; put `trading.product.product` in
+`config.yaml` to make it permanent. Before trading a new type run `python -m scripts.check_proposal R_100 accumulator`
+(requests prices only, never buys) to confirm Deriv accepts the request fields.

@@ -97,3 +97,24 @@ async def test_client_adapts_when_deriv_rejects_the_legacy_symbol_field(
     sent = [r for r in mock.requests if "proposal" in r]
     assert any("underlying_symbol" in r for r in sent)
     await ctl.shutdown()
+
+
+async def test_trade_type_can_be_switched_and_probe_trades_accumulators(
+    tmp_path: Path, mock: MockDeriv
+) -> None:
+    from app.controller import ControllerError
+
+    ctl = probe_controller(tmp_path, mock)
+    assert ctl.set_product("accumulator") == "accumulator"
+    assert ctl.config.trading.product.product.value == "accumulator"
+    with pytest.raises(ControllerError, match="unknown"):
+        ctl.set_product("nonsense")
+    await ctl.start()
+    with pytest.raises(ControllerError, match="stop the bot"):
+        ctl.set_product("multiplier")
+    mock.auto_settle = (0.05, True)
+    for i in range(12):
+        await ctl.process_tick(_tick(i))
+    await wait_until(lambda: ctl.tracker is not None and ctl.tracker.settled_count >= 1)
+    assert ctl.repos.db.query("SELECT * FROM orders")[0]["product"] == "accumulator"
+    await ctl.shutdown()

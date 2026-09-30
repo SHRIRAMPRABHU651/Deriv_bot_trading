@@ -27,6 +27,11 @@ class ClearKillBody(BaseModel):
     phrase: Literal["CLEAR KILL"]
 
 
+class ProductBody(BaseModel):
+    confirm: Literal[True]
+    product: Literal["multiplier", "accumulator", "turbo", "vanilla", "rise_fall"]
+
+
 class ModeBody(BaseModel):
     target: Literal["demo", "live"]
     typed: str = ""
@@ -108,6 +113,14 @@ def build_router(controller: Controller, guard: Guard) -> APIRouter:
     async def model_reload(body: Confirm) -> dict[str, Any]:
         loaded = controller.reload_model()
         return {"ok": loaded, "model": controller.status()["model"]}
+
+    @router.post("/product", dependencies=[act])
+    async def product(body: ProductBody) -> dict[str, Any]:
+        try:
+            chosen = controller.set_product(body.product)
+        except ControllerError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"ok": True, "product": chosen}
 
     @router.post("/risk/drawdown/reset", dependencies=[act])
     async def drawdown_reset(body: Confirm) -> dict[str, Any]:
