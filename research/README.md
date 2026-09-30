@@ -41,3 +41,10 @@ python -m research.analyze --ticks data/R_100.csv
 ```
 Randomness tests + fee-adjusted break-even + walk-forward test per trade setting, corrected for the number of settings tried.
 The bot should only be allowed to trade a setting the report marks `CANDIDATE`, and even then only after >= 1000 demo trades.
+
+## Using other datasets (Hugging Face, Kaggle, broker exports)
+```bash
+python -m research.convert_csv --in eurusd_1m.csv --time-col timestamp --price-col close --out data/eurusd.csv
+python -m research.analyze --ticks data/eurusd.csv --horizon 5
+```
+Only data of the instrument you will actually trade is relevant; the tick spacing must match the trade horizon.
