@@ -42,8 +42,13 @@ class RandomnessResult:
         return [name for name, _, p in self.tests if p < self.alpha_adjusted]
 
 
-def randomness_tests(prices: FloatArray, alpha: float = 0.05) -> RandomnessResult:
+def randomness_tests(
+    prices: FloatArray, alpha: float = 0.05, epochs: npt.NDArray[np.int64] | None = None
+) -> RandomnessResult:
     ret = np.diff(np.log(prices))
+    if epochs is not None and len(epochs) == len(prices):  # drop returns across market gaps
+        dt = np.diff(epochs)
+        ret = ret[dt <= 3 * np.median(dt)]
     n = len(ret)
     tests: list[tuple[str, float, float]] = []
     x = ret - ret.mean()
@@ -132,6 +137,11 @@ def main(argv: list[str] | None = None) -> int:
         default=0.00044,
         help="commission per unit of multiplier, as a fraction of stake (0.00044 = 4.4%% at x100)",
     )
+    p.add_argument(
+        "--skip-accumulators",
+        action="store_true",
+        help="accumulators exist only on synthetic indices: skip them for forex/crypto data",
+    )
     p.add_argument("--horizon", type=int, default=cfg.trading.product.horizon_ticks)
     p.add_argument("--alpha", type=float, default=cfg.ml.alpha)
     args = p.parse_args(argv)
@@ -139,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     epochs, prices = load_ticks_csv(args.ticks)
     print(f"ticks: {len(prices)}  span: {(epochs[-1] - epochs[0]) / 3600:.1f} h\n")
 
-    rt = randomness_tests(prices, args.alpha)
+    rt = randomness_tests(prices, args.alpha, epochs)
     print(f"1) RANDOMNESS TESTS (Bonferroni alpha {rt.alpha_adjusted:.4f}, {len(rt.tests)} tests)")
     for name, z, pv in rt.tests:
         flag = "  <-- significant" if pv < rt.alpha_adjusted else ""
@@ -153,6 +163,8 @@ def main(argv: list[str] | None = None) -> int:
 
     base = cfg.trading.product.model_copy(update={"horizon_ticks": args.horizon})
     specs = candidate_specs(base, args.fee_per_multiplier)
+    if args.skip_accumulators:
+        specs = [x for x in specs if x.product is not Product.ACCUMULATOR]
     alpha_adj = args.alpha / len(specs)
     print(
         f"\n2+3) TRADE SETTINGS (walk-forward alpha {alpha_adj:.4f}, {len(specs)} settings tried)"

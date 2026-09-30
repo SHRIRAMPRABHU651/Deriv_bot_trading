@@ -232,6 +232,27 @@ class MockDeriv:
             end_req = req.get("end", "latest")
             end = latest if end_req == "latest" else min(int(end_req), latest)
             times = list(range(end - n + 1, end + 1))
+            if req.get("style") == "candles":
+                gran = int(req.get("granularity", 60))
+                epochs = [(t // gran) * gran for t in range(end - n * gran + 1, end + 1, gran)]
+                await self._send(
+                    ws,
+                    {
+                        "msg_type": "candles",
+                        "req_id": rid,
+                        "candles": [
+                            {
+                                "epoch": e,
+                                "open": 1.0,
+                                "high": 1.1,
+                                "low": 0.9,
+                                "close": 1.0 + 1e-4 * (e % 97),
+                            }
+                            for e in epochs
+                        ],
+                    },
+                )
+                return
             await self._send(
                 ws,
                 {

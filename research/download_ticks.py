@@ -1,6 +1,8 @@
 """Download historical ticks (public ticks_history) to CSV.
 
     python -m research.download_ticks --symbol R_100 --count 200000 --out data/R_100.csv
+    python -m research.download_ticks --symbol frxEURUSD --granularity 60 --count 50000 \\
+        --out data/EURUSD_1m.csv
 
 Pages backwards from "latest" in chunks, rate-limited and retried. ticks_history is a public
 call, so no token is needed. The public WebSocket URL is configurable (`--ws-url`) because it
@@ -28,7 +30,11 @@ log = logging.getLogger("derivbot.research")
 
 
 async def download(
-    ws: DerivWebSocket, symbol: str, total: int, chunk: int = 5000
+    ws: DerivWebSocket,
+    symbol: str,
+    total: int,
+    chunk: int = 5000,
+    granularity: int | None = None,
 ) -> list[tuple[int, float]]:
     """Walk backwards using `end` until `total` unique ticks are collected (or no progress)."""
     seen: dict[tuple[int, float], None] = {}
@@ -37,7 +43,12 @@ async def download(
     while len(seen) < total and stalls < 3:
         try:
             msg = await ws.request(
-                protocol.ticks_history(symbol, count=min(chunk, total - len(seen) + 1), end=end),
+                protocol.ticks_history(
+                    symbol,
+                    count=min(chunk, total - len(seen) + 1),
+                    end=end,
+                    granularity=granularity,
+                ),
                 timeout_s=60.0,
                 safe_to_retry=True,
             )
@@ -46,7 +57,7 @@ async def download(
             stalls += 1
             await asyncio.sleep(1.0)
             continue
-        rows = protocol.parse_history(msg)
+        rows = protocol.parse_candles(msg) if granularity else protocol.parse_history(msg)
         before = len(seen)
         for epoch, price in rows:
             seen[(epoch, price)] = None
@@ -77,7 +88,7 @@ async def run(args: argparse.Namespace) -> int:
     ws = DerivWebSocket(url, limiter, Backoff(), request_timeout=60.0)
     await ws.start()
     try:
-        rows = await download(ws, args.symbol, args.count, args.chunk)
+        rows = await download(ws, args.symbol, args.count, args.chunk, args.granularity)
     finally:
         await ws.close()
     write_csv(rows, Path(args.out))
@@ -90,6 +101,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--symbol", default="R_100")
     p.add_argument("--count", type=int, default=100_000, help="number of ticks to fetch")
     p.add_argument("--chunk", type=int, default=5000, help="ticks per request (server max ~5000)")
+    p.add_argument(
+        "--granularity",
+        type=int,
+        default=None,
+        help="seconds per candle (60 = 1-minute bars, closes are saved). Tick history only reaches "
+        "back about 24 h; candles reach weeks/months. Default: raw ticks",
+    )
     p.add_argument("--out", default="data/ticks.csv")
     p.add_argument("--ws-url", default=DEFAULT_WS)
     return asyncio.run(run(p.parse_args(argv)))

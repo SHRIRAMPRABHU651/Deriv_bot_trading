@@ -79,14 +79,23 @@ def ticks(symbol: str, subscribe: bool = True) -> dict[str, Any]:
 
 
 def ticks_history(
-    symbol: str, *, count: int, end: str | int = "latest", start: int | None = None
+    symbol: str,
+    *,
+    count: int,
+    end: str | int = "latest",
+    start: int | None = None,
+    granularity: int | None = None,
 ) -> dict[str, Any]:
+    """Ticks by default; with `granularity` (seconds per bar, e.g. 60) candles, which reach much
+    further back than tick history."""
     req: dict[str, Any] = {
         "ticks_history": symbol,
         "end": str(end),  # schema: string matching ^(latest|[0-9]{1,10})$
         "count": count,
-        "style": "ticks",
+        "style": "ticks" if granularity is None else "candles",
     }
+    if granularity is not None:
+        req["granularity"] = granularity
     if start is not None:
         req["start"] = start
     return req
@@ -155,6 +164,17 @@ def parse_tick(msg: dict[str, Any], received_at: float) -> Tick | None:
         )
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def parse_candles(msg: dict[str, Any]) -> list[tuple[int, float]]:
+    """(epoch, close) per candle."""
+    candles = msg.get("candles")
+    if not isinstance(candles, list):
+        raise ProtocolError("ticks_history response without 'candles'")
+    try:
+        return [(int(c["epoch"]), float(c["close"])) for c in candles]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ProtocolError(f"malformed candle: {exc}") from exc
 
 
 def parse_history(msg: dict[str, Any]) -> list[tuple[int, float]]:

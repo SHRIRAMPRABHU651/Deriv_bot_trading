@@ -402,3 +402,18 @@ def test_demo_promotion_counts_target_hits_not_small_profits(tmp_path: Path) -> 
     ok, test, why = evaluate_demo_promotion(tmp_path / "m", tmp_path / "d.db", min_demo_trades=1000)
     assert test.n == 1200 and test.win_rate == pytest.approx(0.45)
     assert not ok and "not significantly" in why
+
+
+async def test_download_candles_pages_backwards(mock: MockDeriv) -> None:
+    async def url() -> str:
+        return mock.url
+
+    ws = DerivWebSocket(url, RateLimiter(500, 100), Backoff(0.05, 2, 0.2, 0.0))
+    await ws.start()
+    try:
+        rows = await download_ticks.download(ws, "frxEURUSD", total=250, chunk=100, granularity=60)
+    finally:
+        await ws.close()
+    assert len(rows) == 250 and len({e for e, _ in rows}) == 250
+    assert all(b - a == 60 for (a, _), (b, _) in zip(rows, rows[1:], strict=False))
+    assert any(r.get("style") == "candles" or r.get("style") == "candles" for r in mock.requests)

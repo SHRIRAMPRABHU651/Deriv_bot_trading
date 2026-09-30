@@ -48,3 +48,12 @@ python -m research.convert_csv --in eurusd_1m.csv --time-col timestamp --price-c
 python -m research.analyze --ticks data/eurusd.csv --horizon 5
 ```
 Only data of the instrument you will actually trade is relevant; the tick spacing must match the trade horizon.
+
+## Forex from Deriv (e.g. frxEURUSD)
+Tick history only reaches back ~24 h, so use 1-minute candles (weeks of data):
+```bash
+python -m research.download_ticks --symbol frxEURUSD --granularity 60 --count 50000 --out data/EURUSD_1m.csv
+python -m research.analyze --ticks data/EURUSD_1m.csv --horizon 5 --skip-accumulators
+```
+Weekend gaps are excluded from the randomness tests. The fee assumption (`--fee-per-multiplier`) was observed on R_100;
+run `python -m scripts.check_proposal frxEURUSD` to see Deriv's real commission for forex multipliers.
