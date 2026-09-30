@@ -30,6 +30,14 @@ Source: developers.deriv.com/docs/intro/oauth (pasted into the session; the site
 - Still unknown: whether the identifier shown next to a PAT/app registration is the value `Deriv-App-ID` expects
   (an OAuth `client_id` may differ from the PAT app id). `scripts/check_auth.py` shows Deriv's exact error.
 
+## 0b. First real response (operator's DEMO account) — CONFIRMED
+`POST/GET /trading/v1/options/accounts` with `Authorization: Bearer <pat_…>` + `Deriv-App-ID` returned
+`{"data": {"account_id": "DOT…", "balance": <number>, "currency": "USD", "group": "row", "status": "active",
+"account_type": "demo"}, "meta": {...}}` — so PAT + App ID authentication works, `account_type` is `demo`/`real`, and a
+single account comes back as an object under `data` (the parser accepts an object or a list). The App ID is a short
+alphanumeric string issued when registering a PAT app; it is NOT the UUID shown on the token screen. Note that `POST` on this
+path is the *create account* call: use `GET` to list.
+
 ## 1. Confirmed current behaviour
 
 ### Authentication (PAT + App ID) **[current-docs excerpt]**
