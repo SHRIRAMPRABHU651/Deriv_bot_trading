@@ -36,9 +36,9 @@ trading:
     assumed_fee_pct: 0.0       # research only: fee as a fraction of stake
     duration_unit: t           # proposal duration unit for expiring products
     # multiplier: server-side take-profit / stop-loss, as a fraction of the stake (stop <= 1)
-    multiplier: 20
-    take_profit_pct: 0.5
-    stop_loss_pct: 0.5
+    multiplier: 100
+    take_profit_pct: 0.1
+    stop_loss_pct: 0.1
     # accumulator: growth per tick; barrier_pct = per-tick barrier as a fraction of spot
     growth_rate: 0.01
     barrier_pct: 0.0006

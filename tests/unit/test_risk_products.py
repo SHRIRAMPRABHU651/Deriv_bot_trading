@@ -16,7 +16,16 @@ D = Decimal
 
 
 def spec(product: Product, **kw: object) -> ProductSpec:
-    return ProductSpec.model_validate({"product": product, "horizon_ticks": 5, **kw})
+    return ProductSpec.model_validate(
+        {
+            "product": product,
+            "horizon_ticks": 5,
+            "multiplier": 20,
+            "take_profit_pct": 0.5,
+            "stop_loss_pct": 0.5,
+            **kw,
+        }
+    )
 
 
 proposal = make_proposal

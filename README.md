@@ -126,7 +126,7 @@ locally only (Host allowlist). The server binds to `127.0.0.1`.
 python -m research.download_ticks --symbol R_100 --count 200000 --out data/R_100.csv
 python -m research.walk_forward   --ticks data/R_100.csv --product multiplier --horizon 20   # report only
 python -m research.train_model    --symbol R_100 --ticks data/R_100.csv --product multiplier \
-    --horizon 20 --multiplier 20 --take-profit 0.5 --stop-loss 0.5
+    --horizon 20 --multiplier 100 --take-profit 0.1 --stop-loss 0.1
 ```
 Walk-forward validation (train | gap | test, rolling), time-aware calibration, a shuffled-label control, exact
 binomial test against the **dynamically computed** break-even `1/R`, Wilson confidence intervals and Cohen's *h*.

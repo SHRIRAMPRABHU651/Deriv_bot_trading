@@ -71,9 +71,9 @@ class ProductSpec(BaseModel):
     # --- rise/fall (research assumption only; live uses the proposal) ---
     payout_ratio: float = 1.95
     # --- multiplier ---
-    multiplier: int = 20
-    take_profit_pct: float = 0.5  # of stake (multiplier & turbo)
-    stop_loss_pct: float = 0.5  # of stake, must be <= 1 (multiplier)
+    multiplier: int = 100
+    take_profit_pct: float = 0.1  # of stake (multiplier & turbo)
+    stop_loss_pct: float = 0.1  # of stake, must be <= 1 (multiplier)
     # --- accumulator ---
     growth_rate: float = 0.01
     barrier_pct: float = 0.0006  # per-tick barrier as a FRACTION of spot (trained assumption)
