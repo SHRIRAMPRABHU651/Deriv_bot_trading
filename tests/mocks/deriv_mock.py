@@ -40,6 +40,7 @@ class MockDeriv:
         self.rate_limit_next = 0
         self.ping_response = True
         self.auto_settle: tuple[float, bool] | None = None
+        self.reject_legacy_symbol = False  # real API: proposal has no `symbol` field
         self.ask_price_override: Decimal | None = None
         self.last_quote = 100.0
         self._props: dict[str, dict[str, Any]] = {}
@@ -293,6 +294,16 @@ class MockDeriv:
         rid = req.get("req_id")
         if self.proposal_delay:
             await asyncio.sleep(self.proposal_delay)
+        if self.reject_legacy_symbol and "symbol" in req:
+            await self._send(
+                ws,
+                self._error(
+                    req,
+                    "InputValidationFailed",
+                    "Input validation failed: Properties not allowed: symbol.",
+                ),
+            )
+            return
         stake = Decimal(str(req["amount"]))
         ctype = str(req["contract_type"])
         spot = self.last_quote
@@ -330,7 +341,7 @@ class MockDeriv:
         self._props[pid] = {
             "ask": ask,
             "payout": payout,
-            "symbol": req["symbol"],
+            "symbol": req.get("symbol", req.get("underlying_symbol")),
             "type": ctype,
             "limit_order": req.get("limit_order"),
         }

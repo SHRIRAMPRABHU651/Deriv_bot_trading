@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from decimal import Decimal
@@ -13,6 +14,7 @@ from app import products
 from app.config import AppConfig, Settings
 from app.deriv import protocol
 from app.deriv.auth import DerivAuth
+from app.deriv.protocol import DerivError
 from app.deriv.rate_limiter import RateLimiter
 from app.deriv.reconnect import Backoff
 from app.deriv.websocket import DerivWebSocket, Subscription
@@ -27,6 +29,8 @@ from app.models.schemas import (
     Tick,
 )
 from app.risk.permit import BuyPermit, PermitError
+
+log = logging.getLogger("derivbot.client")
 
 
 class DerivClient:
@@ -53,6 +57,7 @@ class DerivClient:
             request_timeout=d.request_timeout_s,
         )
         self._tick_subs: dict[str, Subscription] = {}
+        self._renames: dict[str, str] = {}  # request field aliases learned from the server
 
     # ---- lifecycle / account ---------------------------------------------------------------
     async def connect(self) -> None:
@@ -93,20 +98,37 @@ class DerivClient:
         return protocol.parse_history(msg)
 
     # ---- trading ---------------------------------------------------------------------------
+    # Field names the current Deriv API renamed relative to the legacy schema. When Deriv answers
+    # "Properties not allowed: <name>" for a proposal request, the alias is applied and the
+    # (side-effect free) proposal is retried once; the working name is remembered.
+    _FIELD_ALIASES = {"symbol": "underlying_symbol"}
+
     async def proposal(self, symbol: str, direction: Direction, stake: Decimal) -> Proposal:
         cfg = self._cfg.trading
-        spec = cfg.product
-        msg = await self.ws.request(
-            protocol.proposal(
-                symbol=symbol,
-                amount=stake,
-                currency=cfg.currency,
-                product_params=products.proposal_params(spec, direction, stake),
-            ),
-            timeout_s=self._cfg.deriv.proposal_timeout_s,
-            safe_to_retry=True,
+        req = protocol.proposal(
+            symbol=symbol,
+            amount=stake,
+            currency=cfg.currency,
+            product_params=products.proposal_params(cfg.product, direction, stake),
         )
-        return protocol.parse_proposal(msg)
+        for attempt in (0, 1):
+            sent = {self._renames.get(k, k): v for k, v in req.items()}
+            try:
+                msg = await self.ws.request(
+                    sent, timeout_s=self._cfg.deriv.proposal_timeout_s, safe_to_retry=True
+                )
+            except DerivError as exc:
+                bad = _not_allowed(exc)
+                fix = {
+                    k: self._FIELD_ALIASES[k] for k in bad if k in req and k in self._FIELD_ALIASES
+                }
+                if attempt or not fix:
+                    raise
+                self._renames.update(fix)
+                log.warning("proposal_field_renamed", extra={"event": "field_alias", "fix": fix})
+                continue
+            return protocol.parse_proposal(msg)
+        raise AssertionError("unreachable")
 
     async def buy(self, permit: BuyPermit, *, timeout_s: float | None = None) -> BuyResult:
         """Send a purchase. Requires a RiskManager-issued permit. Never auto-retried: on
@@ -151,3 +173,12 @@ class DerivClient:
     async def portfolio(self) -> list[dict[str, Any]]:
         msg = await self.ws.request(protocol.portfolio(), safe_to_retry=True)
         return protocol.parse_portfolio(msg)
+
+
+def _not_allowed(exc: DerivError) -> list[str]:
+    """Names from a 'Properties not allowed: a, b.' validation error."""
+    marker = "not allowed:"
+    if marker not in exc.message:
+        return []
+    tail = exc.message.split(marker, 1)[1].strip().rstrip(".")
+    return [n.strip() for n in tail.split(",") if n.strip()]

@@ -180,3 +180,10 @@ the edge gate come from the proposal (`ask_price`, `commission`, limit orders, c
   does **not** depend on the SDK; it reuses only the *message schemas*, which are shared.
 - The legacy `authorize` call, `app_id` query parameter and `loginid` switching are not used.
 - The SDK's `api.subscribe()` (RxPY observables) is replaced by a small `req_id`-routed subscription registry.
+
+## 0c. First real DEMO run findings
+- Real API answer to a legacy-style proposal: `InputValidationFailed: Properties not allowed: symbol`. The current
+  `proposal` request does not accept `symbol`. `DerivClient.proposal` now reads the "Properties not allowed" message,
+  maps `symbol` -> `underlying_symbol` (assumed replacement, **not yet confirmed**), retries once and remembers it.
+- `python scripts/check_proposal.py` requests proposals (never buys) and prints the exact request + Deriv's reply, so
+  any further field mismatch (multiplier `limit_order`, `duration`, ...) can be corrected from one paste.

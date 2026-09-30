@@ -82,3 +82,18 @@ async def test_no_probe_no_model_means_no_trading(tmp_path: Path, mock: MockDeri
     await ctl.start()
     assert not ctl.trading_enabled and ctl.status()["probe"] is False
     await ctl.shutdown()
+
+
+async def test_client_adapts_when_deriv_rejects_the_legacy_symbol_field(
+    tmp_path: Path, mock: MockDeriv
+) -> None:
+    mock.reject_legacy_symbol = True  # what the real API answered
+    ctl = probe_controller(tmp_path, mock)
+    await ctl.start()
+    mock.auto_settle = (0.05, True)
+    for i in range(12):
+        await ctl.process_tick(_tick(i))
+    await wait_until(lambda: ctl.tracker is not None and ctl.tracker.settled_count >= 1)
+    sent = [r for r in mock.requests if "proposal" in r]
+    assert any("underlying_symbol" in r for r in sent)
+    await ctl.shutdown()
