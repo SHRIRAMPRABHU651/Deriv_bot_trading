@@ -57,3 +57,11 @@ python -m research.analyze --ticks data/EURUSD_1m.csv --horizon 5 --skip-accumul
 ```
 Weekend gaps are excluded from the randomness tests. The fee assumption (`--fee-per-multiplier`) was observed on R_100;
 run `python -m scripts.check_proposal frxEURUSD` to see Deriv's real commission for forex multipliers.
+
+## Accumulators held for a few ticks
+```bash
+python -m scripts.check_proposal R_100 accumulator          # read the barrier: "within the +-0.06126%"
+python -m research.accumulator_study --ticks data/R_100.csv --barrier-percent 0.06126 --max-hold 10
+```
+Shows, per hold time, the win rate, the win rate needed to break even and the expected profit per trade with a
+95 % range. Most trades can win and the strategy can still lose money (many 1 % wins, rare 100 % losses).
