@@ -33,6 +33,11 @@ class ReviewBody(BaseModel):
     note: str
 
 
+class DrawdownBody(BaseModel):
+    confirm: Literal[True]
+    phrase: Literal["RESET DRAWDOWN"]
+
+
 class ProductBody(BaseModel):
     confirm: Literal[True]
     product: Literal["multiplier", "accumulator", "turbo", "vanilla", "rise_fall"]
@@ -138,9 +143,9 @@ def build_router(controller: Controller, guard: Guard) -> APIRouter:
         return {"ok": True, "review": controller.status()["review"]}
 
     @router.post("/risk/drawdown/reset", dependencies=[act])
-    async def drawdown_reset(body: Confirm) -> dict[str, Any]:
+    async def drawdown_reset(body: DrawdownBody) -> dict[str, Any]:
         try:
-            controller.reset_drawdown_halt()
+            await controller.reset_drawdown_halt()
         except ControllerError as exc:
             raise HTTPException(409, str(exc)) from exc
         return {"ok": True}

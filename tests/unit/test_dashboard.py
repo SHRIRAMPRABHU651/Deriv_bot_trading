@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from app.controller import Controller
 from app.main import create_app
+from app.models.schemas import Mode
 from tests.conftest import make_settings
 from tests.mocks.deriv_mock import MockDeriv
 
@@ -201,9 +202,15 @@ async def test_model_reload_and_drawdown_reset(
 ) -> None:
     r = await post(http, "/model/reload", {"confirm": True})
     assert r.status_code == 200 and r.json()["model"]["version"] == "stub-1"
-    assert (
-        await post(http, "/risk/drawdown/reset", {"confirm": True})
-    ).status_code == 409  # no balance yet
+    ok = {"confirm": True, "phrase": "RESET DRAWDOWN"}
+    assert (await post(http, "/risk/drawdown/reset", {"confirm": True})).status_code == 422
+    controller.risk.state.set_drawdown_halt(Mode.DEMO, True)
+    assert "DRAWDOWN_HALT" in (await http.get("/api/status")).json()["halts"]
+    r = await post(http, "/risk/drawdown/reset", ok)  # balance comes from the account list
+    assert r.status_code == 200
+    assert "DRAWDOWN_HALT" not in (await http.get("/api/status")).json()["halts"]
+    await controller.start()
+    assert (await post(http, "/risk/drawdown/reset", ok)).status_code == 409  # not while running
 
 
 async def test_lifespan_shuts_the_controller_down(app: FastAPI, controller: Controller) -> None:

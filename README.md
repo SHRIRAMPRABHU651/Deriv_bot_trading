@@ -236,3 +236,9 @@ The preset holds each accumulator ~3 ticks (native take-profit closes it, a mark
 trade size at 0.1 % of the balance, and stops after 20 losing trades in a day until you press **Review & resume**.
 Measured on real R_100 ticks: every hold time from 1 to 10 ticks loses on average (about -0.5 % of the stake per trade at 1
 tick, more when held longer): the win rate is high but below break-even. DEMO money only.
+
+## Drawdown halt and manual trades on the same account
+The bot's drawdown stop watches the **account balance**, so manual trades you place on the same Deriv account count
+too. If you lose 10 % from the balance peak (even by hand) the bot halts until you press **Reset drawdown halt…**
+(bot stopped, type `RESET DRAWDOWN`): the peak is then re-based to the current balance. Best practice: give the bot its
+own demo account (set `DERIV_DEMO_ACCOUNT_ID`) and do not trade by hand on it.

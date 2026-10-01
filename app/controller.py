@@ -560,18 +560,28 @@ class Controller:
         except ValueError as exc:
             raise ControllerError(str(exc)) from exc
 
-    def reset_drawdown_halt(self) -> None:
+    async def reset_drawdown_halt(self) -> None:
+        """Deliberately clear the persistent drawdown halt; the high-water mark is re-based to the
+        CURRENT verified balance (so the drawdown restarts from here). Bot must be stopped."""
         if self.running:
             raise ControllerError("stop the bot before resetting the drawdown halt")
         bal = self.account.balance
+        if bal is None:  # nothing fetched in this process yet: ask the account list (read-only)
+            from app.deriv.auth import DerivAuth
+
+            auth = DerivAuth(self.settings, self.config.deriv.rest_base_url, self.http)
+            try:
+                bal = (await auth.verify_account(self.mode)).balance
+            except (AuthError, httpx.HTTPError) as exc:
+                raise ControllerError(f"cannot read the balance: {exc}") from exc
         if bal is None:
-            raise ControllerError("no verified balance; start the bot once to refresh it")
+            raise ControllerError("no verified balance available; try again after Start")
         self.risk.state.reset_drawdown(self.mode, bal)
         self.repos.add_risk_event(
             self.mode,
             Severity.WARNING,
             "drawdown_reset",
-            "drawdown halt reset manually; HWM re-based",
+            f"drawdown halt reset manually; high-water mark re-based to {bal}",
         )
 
     # ---- mode switching (DEMO -> LIVE) ------------------------------------------------------
