@@ -88,3 +88,45 @@ async def test_inspect_orders_lists_and_releases_a_stuck_order(
     assert len(repos.active_orders(Mode.DEMO)) == 1
     assert await inspect_orders.main(release=True) == 0
     assert repos.active_orders(Mode.DEMO) == []
+
+
+async def test_auth_failures_on_reconnect_are_explained_throttled_and_recovered(
+    mock: MockDeriv,
+) -> None:
+    import asyncio
+
+    from app.deriv.auth import AuthError
+    from app.deriv.rate_limiter import RateLimiter
+    from app.deriv.reconnect import Backoff
+    from app.deriv.websocket import DerivWebSocket
+
+    calls = {"n": 0}
+
+    async def url() -> str:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise AuthError("OTP request failed: HTTP 429 - slow down url=wss://x?otp=SECRET123")
+        return mock.url
+
+    ws = DerivWebSocket(url, RateLimiter(500, 100), Backoff(0.01, 2, 0.05, 0.0))
+    ws.auth_retry_floor_s = 0.05
+    await ws.start()
+    try:
+        await asyncio.wait_for(ws.connected.wait(), 5)
+        assert calls["n"] == 3 and ws.last_error is None  # recovered, error cleared
+    finally:
+        await ws.close()
+
+    calls["n"] = 0
+
+    async def always_fail() -> str:
+        raise AuthError("OTP request failed: HTTP 429 - slow down url=wss://x?otp=SECRET123")
+
+    bad = DerivWebSocket(always_fail, RateLimiter(500, 100), Backoff(0.01, 2, 0.05, 0.0))
+    bad.auth_retry_floor_s = 0.05
+    task = asyncio.create_task(bad.start())
+    await asyncio.sleep(0.4)
+    assert bad.last_error is not None and "HTTP 429" in bad.last_error
+    assert "SECRET123" not in bad.last_error
+    task.cancel()
+    await bad.close()

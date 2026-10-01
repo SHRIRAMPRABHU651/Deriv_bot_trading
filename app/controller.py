@@ -732,6 +732,10 @@ class Controller:
             "running": self.running,
             "trading_enabled": self.trading_enabled
             and (self.predictor is not None or self.probe_enabled),
+            "connection": {
+                "connected": bool(self.client is not None and self.client.ws.connected.is_set()),
+                "last_error": None if self.client is None else self.client.ws.last_error,
+            },
             "probe": self.probe_enabled,
             "stake_preview": (
                 None if preview is None else {"stake": str(preview[0]), "minimum": str(preview[1])}

@@ -57,7 +57,7 @@ class JsonFormatter(logging.Formatter):
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         for key, value in record.__dict__.items():
-            if key in ("delay_s", "error", "latency_ms") and key not in payload:
+            if key in ("delay_s", "error", "detail", "latency_ms") and key not in payload:
                 payload[key] = value
         return redact(json.dumps(payload, default=str))
 

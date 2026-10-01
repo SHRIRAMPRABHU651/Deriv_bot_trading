@@ -15,9 +15,11 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
 from app.deriv import protocol
+from app.deriv.auth import AuthError
 from app.deriv.protocol import ConnectionLost, DerivError, RateLimitError
 from app.deriv.rate_limiter import RateLimiter
 from app.deriv.reconnect import Backoff
+from app.logging_setup import redact
 
 log = logging.getLogger("derivbot.ws")
 
@@ -68,6 +70,8 @@ class DerivWebSocket:
         self.reconnect_count = 0
         self.disconnect_count = 0
         self.last_message_at = 0.0
+        self.last_error: str | None = None
+        self.auth_retry_floor_s = 15.0
 
     # ---- lifecycle --------------------------------------------------------------------------
     async def start(self, timeout_s: float = 30.0) -> None:
@@ -100,6 +104,7 @@ class DerivWebSocket:
         first = True
         while not self._closing:
             connected_at = 0.0
+            auth_failed = False
             try:
                 url = await self._url_provider()
                 async with connect(url, ping_interval=None, open_timeout=15, max_size=2**22) as ws:
@@ -109,6 +114,7 @@ class DerivWebSocket:
                     if not first:
                         self.reconnect_count += 1
                     self.last_message_at = time.time()
+                    self.last_error = None
                     self.connected.set()
                     hb = asyncio.create_task(self._heartbeat(ws), name="deriv-ws-heartbeat")
                     if self.on_connected is not None:
@@ -124,7 +130,15 @@ class DerivWebSocket:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.warning("ws_error", extra={"event": "ws_error", "error": type(exc).__name__})
+                detail = redact(str(exc))[:240]
+                self.last_error = (
+                    f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+                )
+                log.warning(
+                    "ws_error",
+                    extra={"event": "ws_error", "error": type(exc).__name__, "detail": detail},
+                )
+                auth_failed = isinstance(exc, AuthError)
             finally:
                 self._ws = None
                 if self.connected.is_set():
@@ -138,6 +152,8 @@ class DerivWebSocket:
             if connected_at and time.monotonic() - connected_at >= self._healthy_after:
                 self._backoff.reset()
             delay = self._backoff.next_delay()
+            if auth_failed:  # Deriv refused a connection key: do not hammer it
+                delay = max(delay, self.auth_retry_floor_s)
             log.info("ws_reconnect_wait", extra={"event": "ws_reconnect_wait", "delay_s": delay})
             await asyncio.sleep(delay)
 
