@@ -199,3 +199,28 @@ consecutive-loss halt (`risk.demo.max_consecutive_losses`, default 3) doing its 
 Rise-Fall* in the **Trade type** box and press **Apply**. It lasts until restart; put `trading.product.product` in
 `config.yaml` to make it permanent. Before trading a new type run `python -m scripts.check_proposal R_100 accumulator`
 (requests prices only, never buys) to confirm Deriv accepts the request fields.
+
+## Evidence pipeline: 6 months, every market, charts, backtest (start here before any real money)
+```bash
+python -m research.pipeline --months 6 --granularity 300 --capital 20   # download -> tests -> backtest -> charts
+# open reports/index.html
+python -m research.backtest --prices data/frxEURUSD_300s.csv --capital 20   # one market in detail
+```
+- Downloads ~6 months of 5-minute Deriv candles per market (reports the span actually received).
+- Backtests mean-reversion, breakout and trend strategies with **commission + slippage**, **volatility-adaptive
+  take-profit / stop-loss / trailing exit**, 1 % risk sizing, a minimum-stake check for small accounts, and judges
+  **only on the last 40 % of the data** (parameters are chosen on the first 60 %), with a multiple-testing-corrected
+  significance test and Sharpe ratio. A negative Sharpe means: fix or drop the strategy.
+- Round-trip cost on Deriv multipliers was ~5 % of the stake per trade (4.4 % commission + slippage); in price terms
+  it does not shrink with a lower multiplier. A strategy must beat that to be approved.
+
+## Daily loss stop and review
+After **3 losing trades in a day** (`risk.*.max_losses_per_day`) or 3 losses in a row, trading stops. Press
+**Review & resume today…**, write what you reviewed and type `RESUME`: the loss counters re-open for the rest of the
+day (at most `max_reviews_per_day` = 2 times). Daily/weekly money limits, the drawdown halt and the kill switch are never
+cleared by a review.
+
+## Small accounts (USD 10-20)
+Deriv's minimum stake is 1.00. At 1 % risk per trade a stake of 1.00 needs a 100 USD balance; with 20 USD the minimum
+stake is already 5 % of the balance, so the dashboard warns `stake_below_minimum`. Do not use real money until a strategy
+has passed the pipeline above **and** more than 1,000 demo trades.
