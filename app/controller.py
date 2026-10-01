@@ -265,6 +265,7 @@ class Controller:
                 raise
             self.client = client
             self.risk.update_balance(bal.balance, bal.currency)
+            self._warn_if_stake_below_minimum(bal.balance)
             self.tracker = SettlementTracker(
                 client,
                 self.repos,
@@ -318,6 +319,27 @@ class Controller:
                 else "started WITHOUT a model: no trading",
             )
             self.alerter.notify("startup", f"bot started in {mode.value} mode")
+
+    def stake_preview(self, balance: Decimal | None = None) -> tuple[Decimal, Decimal] | None:
+        bal = balance if balance is not None else self.account.balance
+        if bal is None:
+            return None
+        prof = self.risk.profile
+        stake = compute_stake(
+            bal, prof.stake_percent, prof.stake_cap_percent, self.config.trading.stake_precision
+        )
+        return stake, self.config.trading.min_stake
+
+    def _warn_if_stake_below_minimum(self, balance: Decimal) -> None:
+        preview = self.stake_preview(balance)
+        if preview is not None and preview[0] < preview[1]:
+            self.repos.add_risk_event(
+                self.mode,
+                Severity.WARNING,
+                "stake_below_minimum",
+                f"risk-sized stake {preview[0]} is below the minimum {preview[1]} for balance "
+                f"{balance}: no trade can be placed without breaking the risk limits",
+            )
 
     async def stop(self) -> None:
         """Graceful stop. Order: disable trading, stop signals, stop executor, reconcile,
@@ -519,6 +541,15 @@ class Controller:
             raise ControllerError("stop the bot before clearing the kill switch")
         self.risk.clear_kill()
 
+    def review_resume(self, note: str) -> None:
+        """Operator reviewed today's losing trades and wants to continue (see RiskManager)."""
+        if not note.strip():
+            raise ControllerError("write what you reviewed before resuming")
+        try:
+            self.risk.resume_after_review(note.strip())
+        except ValueError as exc:
+            raise ControllerError(str(exc)) from exc
+
     def reset_drawdown_halt(self) -> None:
         if self.running:
             raise ControllerError("stop the bot before resetting the drawdown halt")
@@ -669,9 +700,12 @@ class Controller:
             halts.append("DAILY_LOSS_HALT")
         if st.consecutive_losses(mode) >= prof.max_consecutive_losses:
             halts.append("CONSECUTIVE_LOSSES")
+        if st.daily_losses(mode) >= prof.max_losses_per_day:
+            halts.append("DAILY_LOSS_COUNT")
         if self.risk.model_halted(info):
             halts.append("MODEL_HALT")
         feed_age = {s: self.feed.age(s, now) for s in self.config.trading.symbols}
+        preview = self.stake_preview()
         return {
             "mode": mode.value,
             "product": self.config.trading.product.model_dump(mode="json"),
@@ -679,6 +713,9 @@ class Controller:
             "trading_enabled": self.trading_enabled
             and (self.predictor is not None or self.probe_enabled),
             "probe": self.probe_enabled,
+            "stake_preview": (
+                None if preview is None else {"stake": str(preview[0]), "minimum": str(preview[1])}
+            ),
             "probe_next_in": {
                 sym: self.strategy.ticks_until_next(sym)
                 for sym in self.config.trading.symbols
@@ -708,6 +745,22 @@ class Controller:
                 "status": info.status.value if info else "NO_MODEL",
                 "version": info.version if info else None,
                 "error": self.model_error,
+            },
+            "review": {
+                "available": self.risk.review_available(),
+                "used_today": st.reviews_today(mode),
+                "max_per_day": prof.max_reviews_per_day,
+                "losses_today": st.daily_losses(mode),
+                "max_losses_per_day": prof.max_losses_per_day,
+                "last_trades": [
+                    {
+                        "opened_at": r["opened_at"],
+                        "symbol": r["symbol"],
+                        "direction": r["direction"],
+                        "profit": r["profit"],
+                    }
+                    for r in settled[:5]
+                ],
             },
             "risk_status": "HALTED" if halts else "OK",
             "halts": halts,

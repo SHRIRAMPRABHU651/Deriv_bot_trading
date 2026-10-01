@@ -59,6 +59,8 @@ class RiskProfile(BaseModel):
     weekly_loss_percent: Decimal
     max_drawdown_percent: Decimal = Decimal("0.10")
     max_consecutive_losses: int = 3
+    max_losses_per_day: int = 3  # total losing trades per day; a manual review is needed to go on
+    max_reviews_per_day: int = 2  # how often "Review & resume" may re-open the day
     max_trades_per_day: int = 200
     max_open_trades: int = 2
     max_open_trades_per_symbol: int = 1

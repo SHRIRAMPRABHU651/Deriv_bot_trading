@@ -53,7 +53,9 @@ function table(el, cols, rows) {
 const pct = (x) => (x === null || x === undefined ? "—" : (100 * x).toFixed(2) + "%");
 const fmtTs = (t) => (t ? new Date(t * 1000).toISOString().slice(11, 19) + "Z" : "—");
 
+let lastStatus = null;
 function render(s) {
+  lastStatus = s;
   const bar = $("modebar");
   bar.className = s.mode === "live" ? "live" : "demo";
   $("mode").textContent = "MODE: " + s.mode.toUpperCase();
@@ -142,6 +144,14 @@ $("btn-clear-kill").onclick = () => {
 };
 $("btn-reload").onclick = () => act(() => post("/model/reload", { confirm: true }));
 $("btn-product").onclick = () => act(() => post("/product", { confirm: true, product: $("product").value }));
+$("btn-review").onclick = () => {
+  const lines = (lastStatus && lastStatus.review ? lastStatus.review.last_trades : [])
+    .map((t) => t.symbol + " " + t.direction + " " + t.profit).join("\n");
+  const note = prompt("Review today's losing trades first:\n" + lines + "\n\nWhat did you review / change? (required)");
+  if (!note) return;
+  const phrase = prompt("Type RESUME to re-open trading for the rest of today:");
+  if (phrase === "RESUME") act(() => post("/risk/review/resume", { confirm: true, phrase, note }));
+};
 $("btn-demo").onclick = () => act(() => post("/mode", { target: "demo" }));
 
 $("btn-live").onclick = async () => {

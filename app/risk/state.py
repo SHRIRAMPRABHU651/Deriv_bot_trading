@@ -61,6 +61,8 @@ class RiskStateStore:
                 self._r.set_risk(mode, "daily_pnl", "0")
                 self._r.set_risk(mode, "daily_trades", "0")
                 self._r.set_risk(mode, "consecutive_losses", "0")
+                self._r.set_risk(mode, "daily_losses", "0")
+                self._r.set_risk(mode, "reviews_today", "0")
                 self._r.set_risk(mode, "daily_halt", "0")
                 self._r.set_risk(mode, "day_start_balance", "")
             if stored_week != week:
@@ -84,6 +86,14 @@ class RiskStateStore:
     def consecutive_losses(self, mode: Mode) -> int:
         self.roll(mode)
         return int(self._r.get_risk(mode, "consecutive_losses", "0") or 0)
+
+    def daily_losses(self, mode: Mode) -> int:
+        self.roll(mode)
+        return int(self._r.get_risk(mode, "daily_losses", "0") or 0)
+
+    def reviews_today(self, mode: Mode) -> int:
+        self.roll(mode)
+        return int(self._r.get_risk(mode, "reviews_today", "0") or 0)
 
     def daily_halt(self, mode: Mode) -> bool:
         self.roll(mode)
@@ -137,6 +147,7 @@ class RiskStateStore:
             self._r.set_risk(mode, "weekly_pnl", str(self.weekly_pnl(mode) + profit))
             if profit < 0:
                 self._r.set_risk(mode, "consecutive_losses", str(self.consecutive_losses(mode) + 1))
+                self._r.set_risk(mode, "daily_losses", str(self.daily_losses(mode) + 1))
             elif profit > 0:
                 self._r.set_risk(mode, "consecutive_losses", "0")
 
@@ -160,6 +171,15 @@ class RiskStateStore:
 
     def reset_streak(self, mode: Mode) -> None:
         self._r.set_risk(mode, "consecutive_losses", "0")
+
+    def note_review(self, mode: Mode) -> None:
+        """A human reviewed the losing trades: re-open the day's loss allowance (not the money
+        limits: daily/weekly loss and drawdown halts are untouched)."""
+        self.roll(mode)
+        with self._r.db.transaction():
+            self._r.set_risk(mode, "consecutive_losses", "0")
+            self._r.set_risk(mode, "daily_losses", "0")
+            self._r.set_risk(mode, "reviews_today", str(self.reviews_today(mode) + 1))
 
     def snapshot(self, mode: Mode) -> dict[str, str]:
         self.roll(mode)

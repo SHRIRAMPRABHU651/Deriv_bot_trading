@@ -148,6 +148,8 @@ async def test_all_protected_endpoints_reject_unauthenticated_requests(
         "/mode/prepare",
         "/model/reload",
         "/risk/drawdown/reset",
+        "/risk/review/resume",
+        "/product",
     ):
         r = await http.post(path, headers=GOOD_ORIGIN, json={"confirm": True})
         assert r.status_code == 401, path
@@ -210,3 +212,20 @@ async def test_lifespan_shuts_the_controller_down(app: FastAPI, controller: Cont
         assert controller.running
     assert not controller.running
     json.dumps({"ok": True})
+
+
+async def test_review_resume_needs_phrase_note_and_an_active_loss_halt(
+    http: httpx.AsyncClient, controller: Controller
+) -> None:
+    from decimal import Decimal
+
+    ok = {"confirm": True, "phrase": "RESUME", "note": "reviewed the 3 losses"}
+    assert (await post(http, "/risk/review/resume", {**ok, "phrase": "no"})).status_code == 422
+    assert (await post(http, "/risk/review/resume", ok)).status_code == 409  # nothing to review
+    for _ in range(3):
+        controller.risk.on_settlement(Decimal("-0.1"))
+    assert "DAILY_LOSS_COUNT" in (await http.get("/api/status")).json()["halts"]
+    assert (await post(http, "/risk/review/resume", {**ok, "note": "  "})).status_code == 409
+    r = await post(http, "/risk/review/resume", ok)
+    assert r.status_code == 200 and r.json()["review"]["used_today"] == 1
+    assert "DAILY_LOSS_COUNT" not in (await http.get("/api/status")).json()["halts"]

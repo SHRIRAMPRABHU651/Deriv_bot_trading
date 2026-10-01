@@ -146,6 +146,33 @@ class RiskManager:
         halted = self._repos.get_bot_state(MODEL_HALT_KEY, "")
         return bool(halted) and model is not None and halted == model.version
 
+    def review_available(self) -> bool:
+        prof = self.profile
+        st = self.state
+        halted = (
+            st.consecutive_losses(self.mode) >= prof.max_consecutive_losses
+            or st.daily_losses(self.mode) >= prof.max_losses_per_day
+        )
+        return halted and st.reviews_today(self.mode) < prof.max_reviews_per_day
+
+    def resume_after_review(self, note: str) -> None:
+        """Human review of a losing streak. Re-opens the loss-count rules for the rest of the day,
+        a limited number of times per day. Daily/weekly money limits, drawdown and kill switch are
+        NOT touched. Raises ValueError when no review is needed or allowed."""
+        prof = self.profile
+        if self.state.reviews_today(self.mode) >= prof.max_reviews_per_day:
+            raise ValueError(
+                f"already reviewed {prof.max_reviews_per_day} times today; stop for the day"
+            )
+        if not self.review_available():
+            raise ValueError("no loss-count halt is active, nothing to review")
+        self.state.note_review(self.mode)
+        self._event(
+            Severity.WARNING,
+            "review_resume",
+            f"loss-count halt reviewed and re-opened by operator: {note[:200]}",
+        )
+
     # ---- balance / drawdown -----------------------------------------------------------------
     def update_balance(self, balance: Decimal, currency: str = "") -> None:
         """Feed a VERIFIED balance. Updates HWM and enforces the persistent drawdown halt."""
@@ -290,6 +317,13 @@ class RiskManager:
 
         if self.state.consecutive_losses(mode) >= prof.max_consecutive_losses:
             return self._reject(signal, "consecutive_losses", "max consecutive losses reached")
+
+        if self.state.daily_losses(mode) >= prof.max_losses_per_day:
+            return self._reject(
+                signal,
+                "daily_loss_count",
+                f"{prof.max_losses_per_day} losing trades today: review the trades to continue",
+            )
 
         # Daily / weekly loss (realized + open worst-case exposure + this stake)
         day_ref = self.state.day_start_balance(mode) or balance

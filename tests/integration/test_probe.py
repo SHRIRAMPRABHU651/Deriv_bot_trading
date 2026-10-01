@@ -118,3 +118,16 @@ async def test_trade_type_can_be_switched_and_probe_trades_accumulators(
     await wait_until(lambda: ctl.tracker is not None and ctl.tracker.settled_count >= 1)
     assert ctl.repos.db.query("SELECT * FROM orders")[0]["product"] == "accumulator"
     await ctl.shutdown()
+
+
+async def test_tiny_balance_is_flagged_because_the_risk_sized_stake_is_below_the_minimum(
+    tmp_path: Path, mock: MockDeriv
+) -> None:
+    from decimal import Decimal
+
+    mock.balance = Decimal("15")  # 1% of 15 = 0.15 < minimum 0.35
+    ctl = probe_controller(tmp_path, mock)
+    await ctl.start()
+    assert ctl.status()["stake_preview"] == {"stake": "0.15", "minimum": "0.35"}
+    assert any(r["rule"] == "stake_below_minimum" for r in ctl.repos.recent_risk_events(20))
+    await ctl.shutdown()

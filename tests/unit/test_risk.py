@@ -536,3 +536,53 @@ def test_rolling_monitor_does_not_halt_normal_variance() -> None:
     h = make_harness()
     _settled(h, wins=52, n=100)
     assert h.risk.check_model_performance(h.flags["model"]) is False
+
+
+# ---------------------------------------------------------------- losses per day + review
+def test_three_losses_in_a_day_stop_trading_until_a_review() -> None:
+    h = make_harness()
+    for pnl in ("-1", "2", "-1", "-1", "2", "-1"):  # 4 losses, never 3 in a row
+        h.risk.on_settlement(D(pnl))
+    dec = h.risk.evaluate(h.signal("R_50"))
+    assert not dec.approved and dec.rule == "daily_loss_count"
+    assert h.risk.review_available()
+
+    h.risk.resume_after_review("spreads were wide; moved to a calmer symbol")
+    assert h.risk.evaluate(h.signal("R_75")).approved
+    assert any(r["rule"] == "review_resume" for r in h.repos.recent_risk_events(50))
+
+
+def test_review_is_limited_per_day_and_never_clears_money_halts() -> None:
+    import pytest
+
+    h = make_harness()
+    cap = h.risk.profile.max_reviews_per_day
+    for i in range(cap):
+        for _ in range(3):
+            h.risk.on_settlement(D("-0.1"))
+        h.risk.resume_after_review(f"review {i}")
+    for _ in range(3):
+        h.risk.on_settlement(D("-0.1"))
+    with pytest.raises(ValueError, match="stop for the day"):
+        h.risk.resume_after_review("one more")
+    assert h.risk.evaluate(h.signal("R_50")).rule in {"consecutive_losses", "daily_loss_count"}
+
+    h2 = make_harness()
+    with pytest.raises(ValueError, match="nothing to review"):
+        h2.risk.resume_after_review("nothing happened")
+    h2.risk.on_settlement(D("-30"))  # breaks the daily MONEY limit
+    h2.risk.on_settlement(D("-1"))
+    h2.risk.on_settlement(D("-1"))
+    h2.risk.resume_after_review("reviewed")
+    assert h2.risk.state.daily_halt(Mode.DEMO)  # money halt untouched
+    assert not h2.risk.evaluate(h2.signal("R_50")).approved
+
+
+def test_next_day_resets_the_loss_count_and_reviews() -> None:
+    h = make_harness(start=datetime(2026, 9, 30, 23, 59, 0, tzinfo=UTC))
+    for _ in range(3):
+        h.risk.on_settlement(D("-0.1"))
+    h.risk.resume_after_review("ok")
+    h.clock.advance(120)
+    assert h.risk.state.daily_losses(Mode.DEMO) == 0
+    assert h.risk.state.reviews_today(Mode.DEMO) == 0

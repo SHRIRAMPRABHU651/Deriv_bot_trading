@@ -27,6 +27,12 @@ class ClearKillBody(BaseModel):
     phrase: Literal["CLEAR KILL"]
 
 
+class ReviewBody(BaseModel):
+    confirm: Literal[True]
+    phrase: Literal["RESUME"]
+    note: str
+
+
 class ProductBody(BaseModel):
     confirm: Literal[True]
     product: Literal["multiplier", "accumulator", "turbo", "vanilla", "rise_fall"]
@@ -121,6 +127,14 @@ def build_router(controller: Controller, guard: Guard) -> APIRouter:
         except ControllerError as exc:
             raise HTTPException(409, str(exc)) from exc
         return {"ok": True, "product": chosen}
+
+    @router.post("/risk/review/resume", dependencies=[act])
+    async def review_resume(body: ReviewBody) -> dict[str, Any]:
+        try:
+            controller.review_resume(body.note)
+        except ControllerError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"ok": True, "review": controller.status()["review"]}
 
     @router.post("/risk/drawdown/reset", dependencies=[act])
     async def drawdown_reset(body: Confirm) -> dict[str, Any]:
