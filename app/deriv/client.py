@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -160,8 +161,12 @@ class DerivClient:
     ) -> Subscription:
         def handler(msg: dict[str, Any]) -> None:
             update = protocol.parse_contract(msg)
-            if update is not None:
-                on_update(update)
+            if update is None:
+                log.warning("contract_update_unparsed: %s", json.dumps(msg, default=str)[:1200])
+                return
+            if update.is_sold or update.status in protocol.CLOSED_STATUSES:
+                log.info("contract_closed_raw: %s", json.dumps(msg, default=str)[:1200])
+            on_update(update)
 
         return await self.ws.subscribe(
             protocol.proposal_open_contract(contract_id, subscribe=True), handler

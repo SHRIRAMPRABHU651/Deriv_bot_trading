@@ -97,3 +97,4 @@ order_id, contract_id, latency_ms`. Tokens, OTPs and bearer headers are redacted
 | `STALE FEED` | ticks stopped; check network; trading resumes automatically |
 | dashboard 400 *host not allowed* | add the host to `app.allowed_hosts` (only if you understand the DNS-rebinding risk) |
 | 403 on actions | CSRF/Origin: use the dashboard page itself, or `curl` with `Authorization`, `X-CSRF-Token` (from `/api/csrf`) and JSON body |
+| signals all `max_open_trades` but nothing is open in the Deriv app | the bot never learned the position closed. It now retries and, after 4 "broker has no such contract" answers, releases the slot (CRITICAL `outcome_unknown`; result not recorded). To free it immediately: stop the bot, `python -m scripts.inspect_orders --release`. `python -m scripts.inspect_orders` (no flag) prints Deriv's raw answer for the contract; the log line `contract_closed_raw` in `logs/derivbot.log` shows the real closing message |

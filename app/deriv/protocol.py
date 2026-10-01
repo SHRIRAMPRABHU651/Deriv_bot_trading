@@ -244,34 +244,71 @@ def parse_buy(msg: dict[str, Any]) -> BuyResult:
         raise ProtocolError(f"buy missing field {exc}") from exc
 
 
+def _safe_dec(value: Any) -> Decimal | None:
+    """Optional money field: anything unparseable is simply absent, never an exception."""
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except InvalidOperation:
+        return None
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes")
+    return bool(value)
+
+
+CLOSED_STATUSES = ("won", "lost", "sold", "cancelled", "closed", "settled")
+
+
 def parse_contract(msg: dict[str, Any]) -> ContractUpdate | None:
+    """Tolerant: unknown or oddly typed optional fields are ignored, because a parse failure here
+    would leave a closed contract looking open (and block every later trade)."""
     body = msg.get("proposal_open_contract")
-    if not isinstance(body, dict) or "contract_id" not in body:
+    if not isinstance(body, dict):
         return None  # Deriv returns an empty object for unknown contracts
+    contract_id = _safe_int(body.get("contract_id", body.get("id")))
+    if contract_id is None:
+        return None
 
     def _spot(*keys: str) -> float | None:
         for key in keys:
-            if body.get(key) is not None:
-                return float(body[key])
+            value = _num(body.get(key))
+            if value is not None:
+                return value
         return None
 
+    status = str(body.get("status") or "open").strip().lower()
+    sell_price = _safe_dec(body.get("sell_price"))
+    sold = _truthy(body.get("is_sold", 0)) or sell_price is not None or body.get("sell_time")
+    if status == "closed" or status == "settled":
+        status = "sold"
     return ContractUpdate(
-        contract_id=int(body["contract_id"]),
-        is_sold=bool(body.get("is_sold", 0)),
-        is_expired=bool(body.get("is_expired", 0)),
-        status=str(body.get("status", "open")),
-        profit=_opt_dec(body.get("profit")),
-        buy_price=_opt_dec(body.get("buy_price")),
-        sell_price=_opt_dec(body.get("sell_price")),
-        payout=_opt_dec(body.get("payout")),
+        contract_id=contract_id,
+        is_sold=bool(sold),
+        is_expired=_truthy(body.get("is_expired", 0)),
+        status=status,
+        profit=_safe_dec(body.get("profit")),
+        buy_price=_safe_dec(body.get("buy_price")),
+        sell_price=sell_price,
+        payout=_safe_dec(body.get("payout")),
         entry_spot=_spot("entry_spot", "entry_tick"),
-        exit_spot=_spot("exit_tick", "sell_spot"),
-        date_expiry=None if body.get("date_expiry") is None else int(body["date_expiry"]),
+        exit_spot=_spot("exit_tick", "sell_spot", "exit_spot"),
+        date_expiry=_safe_int(body.get("date_expiry")),
         symbol=None if body.get("underlying") is None else str(body["underlying"]),
         contract_type=None if body.get("contract_type") is None else str(body["contract_type"]),
-        purchase_time=None if body.get("purchase_time") is None else int(body["purchase_time"]),
-        bid_price=_opt_dec(body.get("bid_price")),
-        valid_to_sell=bool(body.get("is_valid_to_sell", 0)),
+        purchase_time=_safe_int(body.get("purchase_time")),
+        bid_price=_safe_dec(body.get("bid_price")),
+        valid_to_sell=_truthy(body.get("is_valid_to_sell", 0)),
     )
 
 

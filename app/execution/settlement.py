@@ -12,7 +12,7 @@ from decimal import Decimal
 from app.clock import Clock
 from app.config import AppConfig
 from app.deriv.client import DerivClient
-from app.deriv.protocol import ConnectionLost, DerivError
+from app.deriv.protocol import CLOSED_STATUSES, ConnectionLost, DerivError
 from app.deriv.websocket import Subscription
 from app.metrics.latency import LatencyTracker
 from app.models.schemas import ContractUpdate, Mode, OrderState, Severity
@@ -21,6 +21,10 @@ from app.risk.manager import ModelInfo, RiskManager
 from app.storage.repositories import Repositories
 
 log = logging.getLogger("derivbot.settlement")
+
+RESOLVE_ATTEMPTS = 20  # settlement-timeout retries per contract
+RESOLVE_RETRY_S = 15.0
+UNKNOWN_LIMIT = 4  # consecutive "broker has no such contract" answers before releasing the slot
 
 SETTLABLE = (
     OrderState.BOUGHT.value,
@@ -55,6 +59,7 @@ class SettlementTracker:
         self._holds: dict[int, asyncio.Task[None]] = {}
         self._plans: dict[int, ExitPlan | None] = {}
         self._selling: set[int] = set()
+        self._unknown_counts: dict[int, int] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self.settled_count = 0
         self.exits = {"take_profit": 0, "hold_cap": 0}
@@ -143,17 +148,50 @@ class SettlementTracker:
     def _spawn(self, coro: Awaitable[None]) -> None:
         task = asyncio.ensure_future(coro)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._task_done)
+
+    def _task_done(self, task: asyncio.Task[None]) -> None:
+        """A failed settlement must never be silent (the order would look open forever)."""
+        self._tasks.discard(task)
+        if task.cancelled() or task.exception() is None:
+            return
+        exc = task.exception()
+        log.error("settlement_task_failed", exc_info=exc)
+        self._repos.add_risk_event(
+            self.mode,
+            Severity.WARNING,
+            "settlement_error",
+            f"{type(exc).__name__}: {exc}"[:300],
+            ts=self._clock.now(),
+        )
 
     async def _timeout_guard(self, order_id: str, contract_id: int, delay: float) -> None:
         await asyncio.sleep(delay)
         row = self._repos.get_order(order_id)
-        if row is not None and row["state"] in SETTLABLE:
-            self._repos.update_order(order_id, state=OrderState.RECONCILIATION_PENDING)
-            self._repos.add_reconciliation(
-                self.mode, "settlement_timeout", "no settlement before timeout", contract_id
-            )
-            await self.resolve(order_id, contract_id)
+        if row is None or row["state"] not in SETTLABLE:
+            return
+        self._repos.update_order(order_id, state=OrderState.RECONCILIATION_PENDING)
+        self._repos.add_reconciliation(
+            self.mode, "settlement_timeout", "no settlement before timeout", contract_id
+        )
+        for _ in range(RESOLVE_ATTEMPTS):
+            try:
+                await self.resolve(order_id, contract_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # keep trying: the order must not stay blocked silently
+                log.exception("resolve_failed")
+                self._repos.add_risk_event(
+                    self.mode,
+                    Severity.WARNING,
+                    "settlement_error",
+                    f"resolve failed: {type(exc).__name__}: {exc}"[:300],
+                    ts=self._clock.now(),
+                )
+            row = self._repos.get_order(order_id)
+            if row is None or row["state"] not in SETTLABLE:
+                return  # settled (or given up on) by resolve()
+            await asyncio.sleep(RESOLVE_RETRY_S)
 
     # ---- state transitions ------------------------------------------------------------------
     def mark_all_pending(self) -> None:
@@ -172,7 +210,7 @@ class SettlementTracker:
         self._subs.clear()
 
     async def handle_update(self, order_id: str, update: ContractUpdate) -> None:
-        if update.is_sold or update.status in ("won", "lost", "sold", "cancelled"):
+        if update.is_sold or update.status in CLOSED_STATUSES:
             await self.settle(order_id, update)
         else:
             await self._maybe_take_profit(order_id, update)
@@ -181,18 +219,42 @@ class SettlementTracker:
         """Query the account for a contract's final state and settle / resume watching."""
         try:
             update = await self._client.contract_status(contract_id)
-        except (DerivError, ConnectionLost, TimeoutError):
-            return  # stays RECONCILIATION_PENDING; retried on reconnect / next sweep
-        if update is None:
-            self._repos.add_reconciliation(
-                self.mode, "contract_unknown", "broker returned no contract", contract_id
-            )
+        except (ConnectionLost, TimeoutError):
+            return  # transient: stays RECONCILIATION_PENDING; retried on reconnect / next sweep
+        except DerivError as exc:
+            self._unknown(order_id, contract_id, f"{exc.code}: {exc.message}")
             return
-        if update.is_sold or update.status in ("won", "lost", "sold", "cancelled"):
+        if update is None:
+            self._unknown(order_id, contract_id, "broker returned no contract")
+            return
+        self._unknown_counts.pop(contract_id, None)
+        if update.is_sold or update.status in CLOSED_STATUSES:
             await self.settle(order_id, update, reconciled=True)
         else:
             self._repos.update_order(order_id, state=OrderState.OPEN)
             await self.watch(order_id, contract_id)
+
+    def _unknown(self, order_id: str, contract_id: int, why: str) -> None:
+        """The broker cannot describe this contract. After a few attempts, stop letting it block
+        trading: mark the order FAILED (outcome NOT recorded) and say so loudly. The balance is
+        refreshed from the broker, so drawdown protection still sees any real loss."""
+        n = self._unknown_counts.get(contract_id, 0) + 1
+        self._unknown_counts[contract_id] = n
+        self._repos.add_reconciliation(self.mode, "contract_unknown", why, contract_id)
+        if n < UNKNOWN_LIMIT:
+            return
+        self._unknown_counts.pop(contract_id, None)
+        self._repos.update_order(
+            order_id, state=OrderState.FAILED, error=f"outcome unknown to broker: {why}"[:200]
+        )
+        self._repos.add_risk_event(
+            self.mode,
+            Severity.CRITICAL,
+            "outcome_unknown",
+            f"contract {contract_id}: {why}. Position released; result NOT recorded in P&L.",
+            ts=self._clock.now(),
+        )
+        self._spawn(self._refresh_balance())
 
     async def settle(
         self, order_id: str, update: ContractUpdate, *, reconciled: bool = False
