@@ -131,3 +131,24 @@ async def test_tiny_balance_is_flagged_because_the_risk_sized_stake_is_below_the
     assert ctl.status()["stake_preview"] == {"stake": "0.15", "minimum": "0.35"}
     assert any(r["rule"] == "stake_below_minimum" for r in ctl.repos.recent_risk_events(20))
     await ctl.shutdown()
+
+
+async def test_hold_ticks_can_be_chosen_and_the_accumulator_preset_loads(
+    tmp_path: Path, mock: MockDeriv
+) -> None:
+    from app.config import load_config
+    from app.controller import ControllerError
+
+    ctl = probe_controller(tmp_path, mock)
+    ctl.set_product("accumulator", horizon_ticks=3)
+    assert ctl.config.trading.product.horizon_ticks == 3
+    ctl.set_product("accumulator", horizon_ticks=1)
+    assert ctl.config.trading.product.horizon_ticks == 1
+    with pytest.raises(ControllerError, match="between 1 and 250"):
+        ctl.set_product("accumulator", horizon_ticks=0)
+
+    preset = load_config("config.accumulator-demo.yaml")
+    assert preset.trading.product.product.value == "accumulator"
+    assert preset.trading.product.horizon_ticks == 3
+    assert preset.probe.enabled and preset.probe.interval_ticks >= 3
+    assert preset.risk.demo.max_trades_per_day >= 1000

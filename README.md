@@ -224,3 +224,15 @@ cleared by a review.
 Deriv's minimum stake is 1.00. At 1 % risk per trade a stake of 1.00 needs a 100 USD balance; with 20 USD the minimum
 stake is already 5 % of the balance, so the dashboard warns `stake_below_minimum`. Do not use real money until a strategy
 has passed the pipeline above **and** more than 1,000 demo trades.
+
+## Accumulators-only DEMO run (continuous) + analysis
+```bash
+copy config.accumulator-demo.yaml config.yaml        # Windows  (cp on macOS/Linux)
+python -m app.main                                   # Start in the dashboard; Trade type / Hold (ticks) are editable when stopped
+python -m research.session_report                    # equity curve, every trade, hold times -> reports/session.html
+python -m research.accumulator_study --ticks data/R_100.csv --barrier-percent 0.06126
+```
+The preset holds each accumulator ~3 ticks (native take-profit closes it, a market sell closes it at the hold cap), keeps
+trade size at 0.1 % of the balance, and stops after 20 losing trades in a day until you press **Review & resume**.
+Measured on real R_100 ticks: every hold time from 1 to 10 ticks loses on average (about -0.5 % of the stake per trade at 1
+tick, more when held longer): the win rate is high but below break-even. DEMO money only.

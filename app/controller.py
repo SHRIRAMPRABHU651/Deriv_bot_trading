@@ -195,7 +195,7 @@ class Controller:
             horizon=self.config.trading.product.horizon_ticks,
         )
 
-    def set_product(self, name: str) -> str:
+    def set_product(self, name: str, *, horizon_ticks: int | None = None) -> str:
         """Choose the trade type (multiplier / accumulator / ...) while the bot is stopped.
 
         In-memory only: put `trading.product.product` in config.yaml to make it permanent.
@@ -210,14 +210,24 @@ class Controller:
         except ValueError as exc:
             raise ControllerError(f"unknown trade type {name!r}") from exc
         current = self.config.trading.product
-        if product is not current.product:
-            self.config.trading.product = ProductSpec.model_validate(
-                {**ProductSpec(product=product).model_dump(), "tick_seconds": current.tick_seconds}
-            )
+        if horizon_ticks is not None and not 1 <= horizon_ticks <= 250:
+            raise ControllerError("hold must be between 1 and 250 ticks")
+        if product is not current.product or (
+            horizon_ticks is not None and horizon_ticks != current.horizon_ticks
+        ):
+            base = ProductSpec(product=product).model_dump()
+            base["tick_seconds"] = current.tick_seconds
+            if horizon_ticks is not None:
+                base["horizon_ticks"] = horizon_ticks
+            self.config.trading.product = ProductSpec.model_validate(base)
             self.strategy = self._build_strategy()
             self.reload_model()
+            spec = self.config.trading.product
             self.repos.add_risk_event(
-                self.mode, Severity.INFO, "product_changed", f"trade type set to {product.value}"
+                self.mode,
+                Severity.INFO,
+                "product_changed",
+                f"trade type set to {spec.product.value}, hold {spec.horizon_ticks} ticks",
             )
         return product.value
 

@@ -1,0 +1,31 @@
+# DEMO preset: trade ONLY accumulators, continuously, closing after a few ticks.
+#   copy config.accumulator-demo.yaml config.yaml        (Windows)   |   cp ... config.yaml  (macOS/Linux)
+# Your own R_100 data shows every hold time LOSES on average (python -m research.accumulator_study).
+# This preset exists to watch real buy -> grow -> close -> settle behaviour on DEMO money only.
+trading:
+  symbols: [R_100]
+  product:
+    product: accumulator
+    horizon_ticks: 3          # hold ~3 ticks (~6 s on R_100); a native take-profit closes it at +3.03 %
+    tick_seconds: 2.0
+    growth_rate: 0.01
+    barrier_pct: 0.0006       # Deriv shows +-0.06126 % for 1 % growth: python -m scripts.check_proposal R_100 accumulator
+probe:
+  enabled: true               # no model exists for this: pipeline test only (DEMO, never LIVE)
+  interval_ticks: 5           # one trade every 5 ticks (>= hold), so trades never queue up
+risk:
+  demo:
+    stake_percent: 0.001      # 0.1 % of balance per trade: a full loss (barrier break) costs the stake
+    stake_cap_percent: 0.001
+    daily_loss_percent: 0.03
+    weekly_loss_percent: 0.06
+    max_drawdown_percent: 0.10
+    max_consecutive_losses: 10
+    max_losses_per_day: 20    # after this many losing trades the bot stops until you press Review & resume
+    max_reviews_per_day: 2
+    max_trades_per_day: 3000
+    max_open_trades: 1
+    max_open_trades_per_symbol: 1
+    max_total_exposure_percent: 0.03
+    max_group_exposure_percent: 0.02
+    cooldown_seconds: 1.0

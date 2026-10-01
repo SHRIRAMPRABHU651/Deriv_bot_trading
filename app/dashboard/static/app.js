@@ -143,7 +143,7 @@ $("btn-clear-kill").onclick = () => {
   if (phrase === "CLEAR KILL") act(() => post("/kill/clear", { confirm: true, phrase }));
 };
 $("btn-reload").onclick = () => act(() => post("/model/reload", { confirm: true }));
-$("btn-product").onclick = () => act(() => post("/product", { confirm: true, product: $("product").value }));
+$("btn-product").onclick = () => act(() => post("/product", { confirm: true, product: $("product").value, horizon_ticks: Number($("hold").value) || null }));
 $("btn-review").onclick = () => {
   const lines = (lastStatus && lastStatus.review ? lastStatus.review.last_trades : [])
     .map((t) => t.symbol + " " + t.direction + " " + t.profit).join("\n");

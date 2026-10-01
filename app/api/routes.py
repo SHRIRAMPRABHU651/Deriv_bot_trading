@@ -36,6 +36,7 @@ class ReviewBody(BaseModel):
 class ProductBody(BaseModel):
     confirm: Literal[True]
     product: Literal["multiplier", "accumulator", "turbo", "vanilla", "rise_fall"]
+    horizon_ticks: int | None = None  # how many ticks a trade is held (accumulators / multipliers)
 
 
 class ModeBody(BaseModel):
@@ -123,7 +124,7 @@ def build_router(controller: Controller, guard: Guard) -> APIRouter:
     @router.post("/product", dependencies=[act])
     async def product(body: ProductBody) -> dict[str, Any]:
         try:
-            chosen = controller.set_product(body.product)
+            chosen = controller.set_product(body.product, horizon_ticks=body.horizon_ticks)
         except ControllerError as exc:
             raise HTTPException(409, str(exc)) from exc
         return {"ok": True, "product": chosen}
