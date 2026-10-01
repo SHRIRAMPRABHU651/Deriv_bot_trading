@@ -10,7 +10,7 @@ import pytest
 from app.config import AppConfig
 from app.controller import Controller
 from app.execution import settlement
-from app.models.schemas import OrderState
+from app.models.schemas import Mode, OrderState
 from tests.conftest import wait_until
 from tests.integration.test_executor import mk_signal, orders
 from tests.mocks.deriv_mock import MockDeriv
@@ -130,3 +130,62 @@ async def test_auth_failures_on_reconnect_are_explained_throttled_and_recovered(
     assert "SECRET123" not in bad.last_error
     task.cancel()
     await bad.close()
+
+
+def state_of(ctl: Controller, order_id: str) -> str:
+    row = ctl.repos.get_order(order_id)
+    return "" if row is None else str(row["state"])
+
+
+async def test_stuck_order_in_the_database_heals_itself_after_a_restart(
+    controller: Controller, mock: MockDeriv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decimal import Decimal
+
+    monkeypatch.setattr(settlement, "RESOLVE_RETRY_S", 0.05)
+    sig = mk_signal()
+    controller.repos.insert_signal(Mode.DEMO, sig, datetime.now(UTC))
+    controller.repos.insert_order(
+        order_id="stuck1",
+        signal=sig,
+        mode=Mode.DEMO,
+        stake=Decimal("1"),
+        break_even=None,
+        ts=datetime.now(UTC),
+    )
+    controller.repos.update_order(
+        "stuck1", state=OrderState.OPEN, contract_id=987654321, order_sent_at=1.0
+    )
+    await controller.start()  # startup reconciliation: the broker has never heard of it
+    await wait_until(
+        lambda: state_of(controller, "stuck1") == OrderState.FAILED.value,
+        timeout_s=8,
+    )
+    assert controller.open_trade_count() == 0
+
+
+async def test_operator_can_release_stuck_orders_only_while_stopped(
+    controller: Controller,
+) -> None:
+    from decimal import Decimal
+
+    from app.controller import ControllerError
+
+    sig = mk_signal()
+    controller.repos.insert_signal(Mode.DEMO, sig, datetime.now(UTC))
+    controller.repos.insert_order(
+        order_id="stuck2",
+        signal=sig,
+        mode=Mode.DEMO,
+        stake=Decimal("1"),
+        break_even=None,
+        ts=datetime.now(UTC),
+    )
+    assert controller.open_trade_count() == 1
+    await controller.start()
+    with pytest.raises(ControllerError, match="stop the bot"):
+        controller.release_stuck_orders()
+    await controller.stop()
+    assert controller.release_stuck_orders() >= 0
+    assert controller.open_trade_count() == 0
+    assert controller.release_stuck_orders() == 0

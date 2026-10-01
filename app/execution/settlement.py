@@ -176,7 +176,7 @@ class SettlementTracker:
         )
         for _ in range(RESOLVE_ATTEMPTS):
             try:
-                await self.resolve(order_id, contract_id)
+                await self.resolve(order_id, contract_id, from_guard=True)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # keep trying: the order must not stay blocked silently
@@ -215,17 +215,22 @@ class SettlementTracker:
         else:
             await self._maybe_take_profit(order_id, update)
 
-    async def resolve(self, order_id: str, contract_id: int) -> None:
-        """Query the account for a contract's final state and settle / resume watching."""
+    async def resolve(self, order_id: str, contract_id: int, *, from_guard: bool = False) -> None:
+        """Query the account for a contract's final state and settle / resume watching.
+        Outside the retry guard (startup, reconnect) an unresolved order schedules its own retries,
+        so it can never be left blocking trading."""
+        retry = not from_guard
         try:
             update = await self._client.contract_status(contract_id)
         except (ConnectionLost, TimeoutError):
-            return  # transient: stays RECONCILIATION_PENDING; retried on reconnect / next sweep
+            if retry:  # transient: try again shortly
+                self._arm_timer(order_id, contract_id, RESOLVE_RETRY_S)
+            return
         except DerivError as exc:
-            self._unknown(order_id, contract_id, f"{exc.code}: {exc.message}")
+            self._unknown(order_id, contract_id, f"{exc.code}: {exc.message}", retry=retry)
             return
         if update is None:
-            self._unknown(order_id, contract_id, "broker returned no contract")
+            self._unknown(order_id, contract_id, "broker returned no contract", retry=retry)
             return
         self._unknown_counts.pop(contract_id, None)
         if update.is_sold or update.status in CLOSED_STATUSES:
@@ -234,7 +239,7 @@ class SettlementTracker:
             self._repos.update_order(order_id, state=OrderState.OPEN)
             await self.watch(order_id, contract_id)
 
-    def _unknown(self, order_id: str, contract_id: int, why: str) -> None:
+    def _unknown(self, order_id: str, contract_id: int, why: str, *, retry: bool) -> None:
         """The broker cannot describe this contract. After a few attempts, stop letting it block
         trading: mark the order FAILED (outcome NOT recorded) and say so loudly. The balance is
         refreshed from the broker, so drawdown protection still sees any real loss."""
@@ -242,6 +247,8 @@ class SettlementTracker:
         self._unknown_counts[contract_id] = n
         self._repos.add_reconciliation(self.mode, "contract_unknown", why, contract_id)
         if n < UNKNOWN_LIMIT:
+            if retry:
+                self._arm_timer(order_id, contract_id, RESOLVE_RETRY_S)
             return
         self._unknown_counts.pop(contract_id, None)
         self._repos.update_order(

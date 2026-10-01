@@ -38,6 +38,11 @@ class DrawdownBody(BaseModel):
     phrase: Literal["RESET DRAWDOWN"]
 
 
+class ReleaseBody(BaseModel):
+    confirm: Literal[True]
+    phrase: Literal["RELEASE"]
+
+
 class ProductBody(BaseModel):
     confirm: Literal[True]
     product: Literal["multiplier", "accumulator", "turbo", "vanilla", "rise_fall"]
@@ -141,6 +146,14 @@ def build_router(controller: Controller, guard: Guard) -> APIRouter:
         except ControllerError as exc:
             raise HTTPException(409, str(exc)) from exc
         return {"ok": True, "review": controller.status()["review"]}
+
+    @router.post("/orders/release", dependencies=[act])
+    async def orders_release(body: ReleaseBody) -> dict[str, Any]:
+        try:
+            released = controller.release_stuck_orders()
+        except ControllerError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"ok": True, "released": released}
 
     @router.post("/risk/drawdown/reset", dependencies=[act])
     async def drawdown_reset(body: DrawdownBody) -> dict[str, Any]:

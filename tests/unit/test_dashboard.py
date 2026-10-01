@@ -150,6 +150,7 @@ async def test_all_protected_endpoints_reject_unauthenticated_requests(
         "/model/reload",
         "/risk/drawdown/reset",
         "/risk/review/resume",
+        "/orders/release",
         "/product",
     ):
         r = await http.post(path, headers=GOOD_ORIGIN, json={"confirm": True})

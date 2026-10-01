@@ -147,6 +147,11 @@ $("btn-clear-kill").onclick = () => {
 };
 $("btn-reload").onclick = () => act(() => post("/model/reload", { confirm: true }));
 $("btn-product").onclick = () => act(() => post("/product", { confirm: true, product: $("product").value, horizon_ticks: Number($("hold").value) || null }));
+$("btn-release").onclick = () => {
+  const n = lastStatus ? lastStatus.open_trades : "?";
+  const phrase = prompt("Bot must be stopped. The bot counts " + n + " open trade(s). If Deriv shows nothing open, release them (their result is NOT recorded).\nType RELEASE to continue:");
+  if (phrase === "RELEASE") act(() => post("/orders/release", { confirm: true, phrase }));
+};
 $("btn-drawdown").onclick = () => {
   const dd = lastStatus ? lastStatus.drawdown : "?";
   const phrase = prompt("Bot must be stopped. Drawdown now " + dd + ". Resetting re-bases the high-water mark to the CURRENT balance.\nType RESET DRAWDOWN to continue:");

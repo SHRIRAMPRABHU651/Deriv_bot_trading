@@ -32,7 +32,7 @@ from app.metrics.latency import FeedHealth, LatencyTracker
 from app.ml.artifacts import ArtifactError
 from app.ml.features import FEATURE_VERSION
 from app.ml.predict import ModelPredictor
-from app.models.schemas import Mode, ModelStatus, Severity, Signal, Tick
+from app.models.schemas import Mode, ModelStatus, OrderState, Severity, Signal, Tick
 from app.products import Product, ProductSpec, directions
 from app.risk.limits import compute_stake
 from app.risk.manager import ModelInfo, RiskManager
@@ -559,6 +559,26 @@ class Controller:
             self.risk.resume_after_review(note.strip())
         except ValueError as exc:
             raise ControllerError(str(exc)) from exc
+
+    def release_stuck_orders(self) -> int:
+        """Operator override: stop counting orders the bot cannot settle. Bot must be stopped. The
+        orders are marked FAILED ('released by operator') and their results are NOT added to P&L;
+        the real balance (and so drawdown protection) is unaffected."""
+        if self.running:
+            raise ControllerError("stop the bot before releasing orders")
+        active = self.repos.active_orders(self.mode)
+        for order in active:
+            self.repos.update_order(
+                order["order_id"], state=OrderState.FAILED, error="released by operator"
+            )
+        if active:
+            self.repos.add_risk_event(
+                self.mode,
+                Severity.WARNING,
+                "orders_released",
+                f"{len(active)} unsettled order(s) released by operator; results not recorded",
+            )
+        return len(active)
 
     async def reset_drawdown_halt(self) -> None:
         """Deliberately clear the persistent drawdown halt; the high-water mark is re-based to the
