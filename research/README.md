@@ -65,3 +65,13 @@ python -m research.accumulator_study --ticks data/R_100.csv --barrier-percent 0.
 ```
 Shows, per hold time, the win rate, the win rate needed to break even and the expected profit per trade with a
 95 % range. Most trades can win and the strategy can still lose money (many 1 % wins, rare 100 % losses).
+
+## Digits Over/Under and "double the stake after a loss" bots (e.g. Candle Mine)
+```bash
+python -m research.martingale_sim --capital 20 --target 10 --p-win 0.4 --payout-profit 1.43
+python -m research.download_ticks --symbol 1HZ10V --count 86400 --out data/1HZ10V.csv
+python -m research.digit_study --ticks data/1HZ10V.csv --decimals 2
+```
+`martingale_sim` runs the exact stake rule of the Deriv Bot XML you shared. `digit_study` tests whether last digits are
+biased or predictable and prints the expected profit of every Over/Under bet after the house margin. The bot itself never
+raises a stake after a loss (hard rule), so this strategy is analysed here, not implemented.
